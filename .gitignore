@@ -1,6 +1,6 @@
 # go
-/cmd/**/server
-/cmd/**/loadgen
+/cmd/server/server
+/cmd/loadgen/loadgen
 *.test
 *.out
 vendor/
