@@ -23,18 +23,40 @@ internal/store       PostgreSQL persistence.
 internal/telemetry   Metrics, structured logs, traces.
 ```
 
-## Concurrency model
+## Design decisions
 
-Each running simulation is owned by exactly one goroutine. Commands (place order, close road, pause, etc.) enter through a bounded channel and are applied sequentially against the virtual clock, never wall time. The simulation goroutine emits immutable events; WebSocket fanout and persistence are downstream consumers that never mutate simulation state directly. A slow or disconnected client cannot block the simulation — its queue has a bounded size and an explicit overflow policy (drop-oldest with a forced resync), and it can always request a fresh snapshot plus replay-from-sequence to catch up.
+**Modular monolith.** One Go binary (`cmd/server`) with separated internal packages instead of microservices. Simulation, routing, and matching are tightly coupled through the virtual clock and event stream, and the project has no measured need for independent scaling or deployment of any one piece.
+
+**Actor-style simulation ownership.** Each active simulation is owned by exactly one goroutine. All external interaction (place order, close road, pause) is a command sent through a bounded channel into that goroutine, which is the sole writer of its state and sole producer of its event stream. This avoids locking around simulation state entirely — the channel serializes access — and is verified with `go test -race` in CI.
+
+**Deterministic virtual time.** Every simulation advances on an internal virtual clock driven by a discrete event queue, never `time.Now()`. Wall-clock time is used only to pace how fast a live viewer receives events (visualization speed) and to measure actual compute duration for benchmark numbers. Same seed and command sequence always produce the same event sequence, which comparison runs and replay both depend on.
+
+**Spatial candidate filtering.** Matching queries a uniform grid bucketing drivers by map cell, expanding outward ring by ring from the pickup, instead of scanning every driver. The grid only narrows the candidate set — actual cost between a candidate and the pickup is still computed with A*.
+
+**Event log with periodic snapshots.** Every event is appended to an ordered log keyed by `(simulation_id, sequence)`. Periodic snapshots let replay or resync start near a target point instead of from sequence zero. Showcase replays are retained permanently; anonymous guest runs may expire.
+
+## Public-demo security
+
+| Risk | Mitigation |
+|---|---|
+| Unbounded simulations exhaust memory/CPU | Guest token per session, per-token quota, global concurrent-simulation cap |
+| Command flooding | Per-connection rate limiting, bounded command queue with rejection past capacity |
+| Slow client stalls simulation progress | Simulation goroutine never blocks on client send; bounded outbound queue with drop-oldest overflow |
+| Guessing another visitor's simulation ID | Unguessable UUIDs, scoped to the issuing guest token |
+| Arbitrary code execution via crafted input | All input validated server-side against domain constraints; no user-supplied code is ever evaluated |
 
 ## WebSocket protocol
 
-A single envelope type wraps every message: `{type, simulationId, sequence, payload}`. Server-to-client messages are simulation events (order placed, driver assigned, position tick, road closed, route recalculated) or control acks. Client-to-server messages are commands (place_order, close_road, pause, resume, set_speed, resync). Full contract: `spec/reference/api-and-persistence.md` in the planning repo.
+`GET /api/v1/simulations/{id}/stream`. A single envelope wraps every message:
+
+```json
+{ "schemaVersion": 1, "simulationId": "string", "sequence": 123, "virtualTime": 42.5, "type": "driver.position.updated", "payload": {} }
+```
+
+Server-to-client messages are simulation events (order placed/assigned, position updates, road closed, route recomputed) or a full `simulation.snapshot` on connect. Client-to-server messages are commands (`place_order`, `close_road`, `pause`, `resume`, `set_speed`, `resync`) and omit `sequence`/`virtualTime`, which the server assigns once applied.
+
+Each connection has a bounded outbound queue. A client that falls behind gets its oldest queued events dropped and the connection closed with a `resync_required` notice; it reconnects or sends `resync` with its last known sequence to get a fresh snapshot plus the events after it.
 
 ## Persistence and replay
 
 Every event a simulation emits is appended to an event log keyed by simulation ID and monotonic sequence number. Periodic snapshots let replay start near a target point instead of from sequence zero. A completed showcase run's events and snapshots are retained permanently for a stable `/replay/:id` URL; anonymous guest runs may expire.
-
-## Benchmark methodology
-
-Comparison runs replay an identical command sequence (same city, same seed, same order timing) through the baseline and optimized matchers. Because the simulation clock is deterministic, the only difference between two runs against the same scenario is the algorithm's own decisions and wall-clock compute time, which is measured, never estimated.
