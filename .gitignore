@@ -1,0 +1,38 @@
+# go
+/cmd/**/server
+/cmd/**/loadgen
+*.test
+*.out
+vendor/
+
+# node / frontend
+node_modules/
+apps/web/dist/
+apps/web/.vite/
+*.tsbuildinfo
+
+# env and local secrets
+.env
+.env.*
+!.env.example
+
+# docker
+docker-compose.override.yml
+
+# local databases
+*.db
+*.sqlite
+*.sqlite3
+
+# logs and coverage
+*.log
+coverage/
+*.cover
+coverage.out
+
+# os and editor cruft
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+*.swp
