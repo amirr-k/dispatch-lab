@@ -1,0 +1,255 @@
+openapi: 3.0.3
+info:
+  title: DispatchLab API
+  version: "1"
+servers:
+  - url: /api/v1
+paths:
+  /guest-sessions:
+    post:
+      summary: Issue a guest token scoping quotas and simulation ownership.
+      responses:
+        "201":
+          description: Guest session created.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/GuestSession" }
+  /simulations:
+    post:
+      summary: Create a new simulation from a seed and algorithm configuration.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CreateSimulationRequest" }
+      responses:
+        "201":
+          description: Simulation created.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Simulation" }
+  /simulations/{id}:
+    get:
+      summary: Fetch simulation metadata and current status.
+      parameters:
+        - $ref: "#/components/parameters/SimulationId"
+      responses:
+        "200":
+          description: Simulation metadata.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Simulation" }
+  /simulations/{id}/orders:
+    post:
+      summary: Place an order (pickup + destination) into a running simulation.
+      parameters:
+        - $ref: "#/components/parameters/SimulationId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/PlaceOrderRequest" }
+      responses:
+        "202":
+          description: Order command accepted.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Order" }
+  /simulations/{id}/closures:
+    post:
+      summary: Close a road segment, invalidating any route crossing it.
+      parameters:
+        - $ref: "#/components/parameters/SimulationId"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CloseRoadRequest" }
+      responses:
+        "202":
+          description: Closure command accepted.
+  /simulations/{id}/pause:
+    post:
+      summary: Pause the simulation clock.
+      parameters:
+        - $ref: "#/components/parameters/SimulationId"
+      responses:
+        "202": { description: Pause command accepted. }
+  /simulations/{id}/resume:
+    post:
+      summary: Resume the simulation clock.
+      parameters:
+        - $ref: "#/components/parameters/SimulationId"
+      responses:
+        "202": { description: Resume command accepted. }
+  /simulations/{id}/reset:
+    post:
+      summary: Reset a simulation back to its initial seeded state.
+      parameters:
+        - $ref: "#/components/parameters/SimulationId"
+      responses:
+        "202": { description: Reset command accepted. }
+  /simulations/{id}/replay:
+    get:
+      summary: Fetch the event log (optionally from a sequence) for replay.
+      parameters:
+        - $ref: "#/components/parameters/SimulationId"
+        - name: fromSequence
+          in: query
+          schema: { type: integer, minimum: 0 }
+      responses:
+        "200":
+          description: Ordered event page.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/EventPage" }
+  /simulations/{id}/stream:
+    get:
+      summary: WebSocket upgrade for live simulation events. See docs/websocket-protocol.md.
+      parameters:
+        - $ref: "#/components/parameters/SimulationId"
+      responses:
+        "101": { description: Switching Protocols. }
+  /comparisons:
+    post:
+      summary: Run a deterministic scenario through baseline and optimized matchers.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CreateComparisonRequest" }
+      responses:
+        "201":
+          description: Comparison created (may run asynchronously).
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Comparison" }
+  /comparisons/{id}:
+    get:
+      summary: Fetch comparison results.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          description: Comparison result.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Comparison" }
+  /health/live:
+    get:
+      summary: Liveness probe.
+      responses: { "200": { description: OK } }
+  /health/ready:
+    get:
+      summary: Readiness probe.
+      responses: { "200": { description: OK } }
+
+components:
+  parameters:
+    SimulationId:
+      name: id
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+
+  schemas:
+    GuestSession:
+      type: object
+      required: [token, expiresAt]
+      properties:
+        token: { type: string }
+        expiresAt: { type: string, format: date-time }
+
+    CreateSimulationRequest:
+      type: object
+      required: [seed, algorithm]
+      properties:
+        seed: { type: integer, format: int64 }
+        algorithm: { type: string, enum: [baseline, optimized] }
+        cityPreset: { type: string }
+        driverCount: { type: integer, minimum: 1, maximum: 200 }
+
+    Simulation:
+      type: object
+      required: [id, seed, status, virtualTime]
+      properties:
+        id: { type: string, format: uuid }
+        seed: { type: integer, format: int64 }
+        algorithm: { type: string, enum: [baseline, optimized] }
+        status: { type: string, enum: [running, paused, completed] }
+        virtualTime: { type: number }
+
+    PlaceOrderRequest:
+      type: object
+      required: [pickupNodeId, destinationNodeId]
+      properties:
+        pickupNodeId: { type: string }
+        destinationNodeId: { type: string }
+
+    Order:
+      type: object
+      required: [id, pickupNodeId, destinationNodeId, status, createdAtVirtualTime]
+      properties:
+        id: { type: string, format: uuid }
+        pickupNodeId: { type: string }
+        destinationNodeId: { type: string }
+        status: { type: string, enum: [pending, assigned, en_route, delivered, unassignable] }
+        assignedDriverId: { type: string, nullable: true }
+        createdAtVirtualTime: { type: number }
+
+    CloseRoadRequest:
+      type: object
+      required: [edgeId]
+      properties:
+        edgeId: { type: string }
+
+    EventPage:
+      type: object
+      required: [events, nextSequence]
+      properties:
+        events:
+          type: array
+          items: { $ref: "#/components/schemas/EventEnvelope" }
+        nextSequence: { type: integer, nullable: true }
+
+    EventEnvelope:
+      type: object
+      required: [schemaVersion, simulationId, sequence, virtualTime, type, payload]
+      properties:
+        schemaVersion: { type: integer }
+        simulationId: { type: string, format: uuid }
+        sequence: { type: integer }
+        virtualTime: { type: number }
+        type: { type: string }
+        payload: { type: object }
+
+    CreateComparisonRequest:
+      type: object
+      required: [seed, cityPreset, demandLevel]
+      properties:
+        seed: { type: integer, format: int64 }
+        cityPreset: { type: string }
+        demandLevel: { type: string, enum: [low, medium, high] }
+        driverCount: { type: integer, minimum: 1, maximum: 200 }
+
+    Comparison:
+      type: object
+      required: [id, status]
+      properties:
+        id: { type: string, format: uuid }
+        status: { type: string, enum: [running, completed] }
+        baseline: { $ref: "#/components/schemas/ComparisonRunResult" }
+        optimized: { $ref: "#/components/schemas/ComparisonRunResult" }
+
+    ComparisonRunResult:
+      type: object
+      properties:
+        averagePickupTime: { type: number }
+        p95PickupTime: { type: number }
+        totalTravelDistance: { type: number }
+        unassignedOrders: { type: integer }
+        assignmentComputeTimeMs: { type: number }
+        completedDeliveries: { type: integer }
