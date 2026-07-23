@@ -103,6 +103,8 @@ func (s *Simulation) Run(ctx context.Context) {
 	defer ticker.Stop()
 	defer close(s.events)
 
+	s.emit(domain.EventSimulationSnapshot, s.snapshotPayload())
+
 	for {
 		select {
 		case <-ctx.Done():
@@ -113,6 +115,34 @@ func (s *Simulation) Run(ctx context.Context) {
 			s.tick()
 		}
 	}
+}
+
+// snapshotPayload describes the city graph and initial driver state a
+// newly connected client needs before it can render anything. Only called
+// from the actor goroutine, so it never races with command handling.
+func (s *Simulation) snapshotPayload() map[string]any {
+	nodes := make([]map[string]any, 0, len(s.City.Nodes))
+	for _, n := range s.City.Nodes {
+		nodes = append(nodes, map[string]any{"id": n.ID, "x": n.X, "y": n.Y})
+	}
+
+	edges := make([]map[string]any, 0)
+	for _, list := range s.City.Edges {
+		for _, e := range list {
+			edges = append(edges, map[string]any{
+				"id": e.ID, "from": e.From, "to": e.To, "closed": e.Closed,
+			})
+		}
+	}
+
+	drivers := make([]map[string]any, 0, len(s.drivers))
+	for _, d := range s.drivers {
+		drivers = append(drivers, map[string]any{
+			"id": d.ID, "position": d.Position, "status": d.Status,
+		})
+	}
+
+	return map[string]any{"nodes": nodes, "edges": edges, "drivers": drivers}
 }
 
 func (s *Simulation) emit(t domain.EventType, payload any) {

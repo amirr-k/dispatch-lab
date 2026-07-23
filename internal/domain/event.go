@@ -5,6 +5,7 @@ package domain
 type EventType string
 
 const (
+	EventSimulationSnapshot   EventType = "simulation.snapshot"
 	EventOrderPlaced          EventType = "order.placed"
 	EventOrderAssigned        EventType = "order.assigned"
 	EventOrderUnassignable    EventType = "order.unassignable"
