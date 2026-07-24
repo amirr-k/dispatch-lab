@@ -91,18 +91,53 @@ paths:
         "202": { description: Reset command accepted. }
   /simulations/{id}/replay:
     get:
-      summary: Fetch the event log (optionally from a sequence) for replay.
+      summary: >
+        Fetch a run's persisted history. Without `at`, returns an ordered page
+        of the event log, which the scrubber plays through. With `at`, returns
+        the state reconstructed at that sequence instead.
       parameters:
         - $ref: "#/components/parameters/SimulationId"
         - name: fromSequence
           in: query
+          description: Exclusive lower bound; events with a higher sequence are returned.
+          schema: { type: integer, minimum: 0 }
+        - name: limit
+          in: query
+          description: Maximum events to return. Defaults to 5000, capped at 20000.
+          schema: { type: integer, minimum: 1, maximum: 20000 }
+        - name: at
+          in: query
+          description: >
+            Reconstruct state at this sequence rather than returning events.
+            0 or omitted with the other parameters means the latest sequence.
           schema: { type: integer, minimum: 0 }
       responses:
         "200":
-          description: Ordered event page.
+          description: An ordered event page, or reconstructed state when `at` is given.
           content:
             application/json:
-              schema: { $ref: "#/components/schemas/EventPage" }
+              schema:
+                oneOf:
+                  - $ref: "#/components/schemas/EventPage"
+                  - $ref: "#/components/schemas/ReplayState"
+        "404": { description: No replay exists for that simulation. }
+        "503": { description: This server has no database attached, so no history was recorded. }
+  /simulations/{id}/showcase:
+    post:
+      summary: >
+        Retain a run permanently and return the stable URL its replay lives at.
+        Writes a final snapshot first, so the stored history ends on the state
+        the visitor actually saw.
+      parameters:
+        - $ref: "#/components/parameters/SimulationId"
+      responses:
+        "200":
+          description: Run retained.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ShowcaseResult" }
+        "404": { description: Simulation not found. }
+        "503": { description: This server has no database attached, so runs cannot be saved. }
   /simulations/{id}/stream:
     get:
       summary: WebSocket upgrade for live simulation events. See docs/websocket-protocol.md.
@@ -144,8 +179,18 @@ paths:
       responses: { "200": { description: OK } }
   /health/ready:
     get:
-      summary: Readiness probe.
-      responses: { "200": { description: OK } }
+      summary: Readiness probe. With a database attached, this answers for the database too.
+      responses:
+        "200": { description: OK }
+        "503": { description: Store is unreachable. }
+  /metrics:
+    get:
+      summary: Prometheus text exposition of the process metrics. Served outside /api/v1.
+      responses:
+        "200":
+          description: Metrics in Prometheus text format.
+          content:
+            text/plain: { schema: { type: string } }
 
 components:
   parameters:
@@ -208,12 +253,103 @@ components:
 
     EventPage:
       type: object
-      required: [events, nextSequence]
+      required: [simulation, events, fromSequence, latestSequence, hasMore]
       properties:
+        simulation: { $ref: "#/components/schemas/StoredSimulation" }
         events:
           type: array
           items: { $ref: "#/components/schemas/EventEnvelope" }
-        nextSequence: { type: integer, nullable: true }
+        fromSequence: { type: integer }
+        latestSequence: { type: integer }
+        hasMore: { type: boolean }
+
+    StoredSimulation:
+      type: object
+      required: [id, seed, drivers, strategy, createdAt, showcase]
+      properties:
+        id: { type: string }
+        seed: { type: integer, format: int64 }
+        drivers: { type: integer }
+        strategy: { type: string, enum: [baseline, optimized] }
+        createdAt: { type: string, format: date-time }
+        completedAt: { type: string, format: date-time }
+        showcase:
+          type: boolean
+          description: Retained permanently, so its replay URL keeps working.
+
+    ShowcaseResult:
+      type: object
+      required: [id, showcase, replayUrl]
+      properties:
+        id: { type: string }
+        showcase: { type: boolean }
+        replayUrl: { type: string, example: "/replay/bf44ec28003c195d" }
+
+    ReplayState:
+      type: object
+      description: Simulation state reconstructed at a sequence number.
+      required: [simulationId, sequence, virtualTime, nodes, edges, drivers, orders]
+      properties:
+        simulationId: { type: string }
+        sequence: { type: integer }
+        virtualTime:
+          type: number
+          description: >
+            The simulation clock at that point. When the reconstruction starts
+            from a snapshot taken while nothing was happening, this can be
+            ahead of the last event's own virtual time; it never goes backwards
+            as the sequence advances.
+        nodes:
+          type: array
+          items: { $ref: "#/components/schemas/CityNode" }
+        edges:
+          type: array
+          items: { $ref: "#/components/schemas/CityEdge" }
+        drivers:
+          type: array
+          items: { $ref: "#/components/schemas/ReplayDriver" }
+        orders:
+          type: array
+          items: { $ref: "#/components/schemas/ReplayOrder" }
+        paused: { type: boolean }
+        speed: { type: number }
+
+    CityNode:
+      type: object
+      properties:
+        id: { type: string }
+        x: { type: number }
+        y: { type: number }
+
+    CityEdge:
+      type: object
+      properties:
+        id: { type: string }
+        from: { type: string }
+        to: { type: string }
+        closed: { type: boolean }
+
+    ReplayDriver:
+      type: object
+      properties:
+        id: { type: string }
+        position: { type: string }
+        status: { type: string, enum: [idle, assigned, en_route_to_pickup, delivering, unavailable] }
+        route:
+          type: array
+          items: { type: string }
+        routeIndex: { type: integer }
+        assignedOrder: { type: string }
+
+    ReplayOrder:
+      type: object
+      properties:
+        id: { type: string }
+        pickup: { type: string }
+        destination: { type: string }
+        status: { type: string, enum: [pending, assigned, en_route, delivered, unassignable] }
+        assignedDriver: { type: string }
+        createdAtVirtualTime: { type: number }
 
     EventEnvelope:
       type: object
@@ -225,6 +361,11 @@ components:
         virtualTime: { type: number }
         type: { type: string }
         payload: { type: object }
+        traceId:
+          type: string
+          description: >
+            The trace of the request that caused this event, absent for events
+            the simulation clock produced on its own.
 
     CreateComparisonRequest:
       type: object

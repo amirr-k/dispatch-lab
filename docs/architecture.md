@@ -33,7 +33,11 @@ internal/telemetry   Metrics, structured logs, traces.
 
 **Spatial candidate filtering.** Matching queries a uniform grid bucketing drivers by map cell, expanding outward ring by ring from the pickup, instead of scanning every driver. The grid only narrows the candidate set — actual cost between a candidate and the pickup is still computed with A*.
 
-**Event log with periodic snapshots.** Every event is appended to an ordered log keyed by `(simulation_id, sequence)`. Periodic snapshots let replay or resync start near a target point instead of from sequence zero. Showcase replays are retained permanently; anonymous guest runs may expire.
+**Event log with periodic snapshots.** Every event is appended to an ordered log keyed by `(simulation_id, sequence)`. Periodic snapshots let replay or resync start near a target point instead of from sequence zero. Showcase replays are retained permanently; anonymous guest runs may expire. Full write policy and reconstruction rules: [persistence-and-replay.md](persistence-and-replay.md).
+
+**A recorder between the simulation and the hub.** Persistence is not another hub subscriber. The hub drops events for subscribers that fall behind — correct for a browser, wrong for an archive — so the recorder sits upstream of it, forwarding every event onward while batching a copy to the store. That way the event log is complete whenever the database can keep up, and when it cannot, the drop is counted rather than silent.
+
+**Telemetry with no external dependency.** Metrics are exposed in Prometheus text format and traces are emitted as structured log records with OpenTelemetry-compatible field names, all from the standard library. A collector or metrics client can be added later without changing a call site, and until there is one to run, the project carries no infrastructure it does not use. See [observability.md](observability.md).
 
 ## Public-demo security
 
@@ -50,8 +54,10 @@ internal/telemetry   Metrics, structured logs, traces.
 `GET /api/v1/simulations/{id}/stream`. A single envelope wraps every message:
 
 ```json
-{ "schemaVersion": 1, "simulationId": "string", "sequence": 123, "virtualTime": 42.5, "type": "driver.position.updated", "payload": {} }
+{ "schemaVersion": 1, "simulationId": "string", "sequence": 123, "virtualTime": 42.5, "type": "driver.position.updated", "payload": {}, "traceId": "optional" }
 ```
+
+`traceId` is present only on events caused by a request, and identifies that request. Events the simulation clock produced on its own omit it.
 
 Server-to-client messages are simulation events (order placed/assigned, position updates, road closed, route recomputed) or a full `simulation.snapshot` on connect. Client-to-server messages are commands (`place_order`, `close_road`, `pause`, `resume`, `set_speed`, `resync`) and omit `sequence`/`virtualTime`, which the server assigns once applied.
 
@@ -60,3 +66,14 @@ Each connection has a bounded outbound queue. A client that falls behind gets it
 ## Persistence and replay
 
 Every event a simulation emits is appended to an event log keyed by simulation ID and monotonic sequence number. Periodic snapshots let replay start near a target point instead of from sequence zero. A completed showcase run's events and snapshots are retained permanently for a stable `/replay/:id` URL; anonymous guest runs may expire.
+
+Details — write batching, the position-update policy, reconstruction, and migrations — are in [persistence-and-replay.md](persistence-and-replay.md).
+
+## Configuration
+
+| Variable | Default | Effect |
+|---|---|---|
+| `ADDR` | `:8080` | Listen address. |
+| `DATABASE_URL` | *(unset)* | Postgres connection string. Unset falls back to in-memory storage, and replays then last only as long as the process. |
+| `LOG_FORMAT` | `json` | `text` for readable local output. |
+| `LOG_LEVEL` | `info` | Standard slog levels. |
