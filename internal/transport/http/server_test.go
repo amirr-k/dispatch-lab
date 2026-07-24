@@ -12,7 +12,7 @@ import (
 )
 
 func newTestServer() *Server {
-	return NewServer(service.NewManager(0))
+	return NewServer(service.NewManager(0), service.NewComparisons())
 }
 
 func doJSON(t *testing.T, handler http.Handler, method, path string, body any) *httptest.ResponseRecorder {
@@ -88,6 +88,55 @@ func TestGetSimulationReturnsSnapshot(t *testing.T) {
 	rec := doJSON(t, s.Routes(), http.MethodGet, "/api/v1/simulations/"+resp.ID, nil)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestCreateComparisonReturnsBothStrategies(t *testing.T) {
+	s := newTestServer()
+	seed := int64(42)
+	drivers := 6
+	rec := doJSON(t, s.Routes(), http.MethodPost, "/api/v1/comparisons", createComparisonRequest{Seed: &seed, Drivers: &drivers})
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("expected 201, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	var result service.ComparisonResult
+	if err := json.Unmarshal(rec.Body.Bytes(), &result); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if result.ID == "" {
+		t.Fatal("expected a generated comparison id")
+	}
+	if result.Baseline.Algorithm != "baseline" || result.Optimized.Algorithm != "optimized" {
+		t.Fatalf("expected both algorithm labels present, got %+v", result)
+	}
+}
+
+func TestCreateComparisonDefaultsSeedAndDrivers(t *testing.T) {
+	s := newTestServer()
+	rec := doJSON(t, s.Routes(), http.MethodPost, "/api/v1/comparisons", createComparisonRequest{})
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("expected 201, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestGetComparisonReturnsStoredResult(t *testing.T) {
+	s := newTestServer()
+	created := doJSON(t, s.Routes(), http.MethodPost, "/api/v1/comparisons", createComparisonRequest{})
+	var result service.ComparisonResult
+	json.Unmarshal(created.Body.Bytes(), &result)
+
+	rec := doJSON(t, s.Routes(), http.MethodGet, "/api/v1/comparisons/"+result.ID, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestGetComparisonNotFound(t *testing.T) {
+	s := newTestServer()
+	rec := doJSON(t, s.Routes(), http.MethodGet, "/api/v1/comparisons/missing", nil)
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("expected 404, got %d", rec.Code)
 	}
 }
 

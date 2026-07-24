@@ -17,13 +17,14 @@ const (
 	maxDrivers     = 40
 )
 
-// Server adapts the service Manager to HTTP.
+// Server adapts the service Manager and comparison store to HTTP.
 type Server struct {
-	mgr *service.Manager
+	mgr     *service.Manager
+	compare *service.Comparisons
 }
 
-func NewServer(mgr *service.Manager) *Server {
-	return &Server{mgr: mgr}
+func NewServer(mgr *service.Manager, compare *service.Comparisons) *Server {
+	return &Server{mgr: mgr, compare: compare}
 }
 
 // Routes builds the full HTTP handler, including the WebSocket stream and
@@ -40,6 +41,9 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("POST /api/v1/simulations/{id}/reset", s.reset)
 	mux.HandleFunc("POST /api/v1/simulations/{id}/speed", s.setSpeed)
 	mux.HandleFunc("GET /api/v1/simulations/{id}/stream", ws.Handler(s.mgr.StreamLookup))
+
+	mux.HandleFunc("POST /api/v1/comparisons", s.createComparison)
+	mux.HandleFunc("GET /api/v1/comparisons/{id}", s.getComparison)
 
 	mux.HandleFunc("GET /health/live", health)
 	mux.HandleFunc("GET /health/ready", health)
@@ -88,6 +92,43 @@ func (s *Server) getSimulation(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, snapshot)
+}
+
+type createComparisonRequest struct {
+	Seed    *int64 `json:"seed"`
+	Drivers *int   `json:"drivers"`
+}
+
+// createComparison runs a fresh deterministic scenario for the given seed
+// and driver count through both matching strategies and stores the result.
+// The scenario itself is checked-in code (service.DefaultScenario), so the
+// same seed and driver count always reproduce the same comparison.
+func (s *Server) createComparison(w http.ResponseWriter, r *http.Request) {
+	var req createComparisonRequest
+	if !decode(w, r, &req) {
+		return
+	}
+
+	seed := rand.Int63()
+	if req.Seed != nil {
+		seed = *req.Seed
+	}
+	drivers := defaultDrivers
+	if req.Drivers != nil {
+		drivers = clamp(*req.Drivers, 1, maxDrivers)
+	}
+
+	result := s.compare.Create(seed, drivers)
+	writeJSON(w, http.StatusCreated, result)
+}
+
+func (s *Server) getComparison(w http.ResponseWriter, r *http.Request) {
+	result, ok := s.compare.Get(r.PathValue("id"))
+	if !ok {
+		writeError(w, http.StatusNotFound, "not_found", "comparison not found")
+		return
+	}
+	writeJSON(w, http.StatusOK, result)
 }
 
 type placeOrderRequest struct {

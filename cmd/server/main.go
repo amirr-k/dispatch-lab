@@ -21,8 +21,9 @@ const (
 func main() {
 	mgr := service.NewManager(maxSimulations)
 	defer mgr.Shutdown()
+	compare := service.NewComparisons()
 
-	server := dispatchhttp.NewServer(mgr)
+	server := dispatchhttp.NewServer(mgr, compare)
 
 	log.Printf("dispatchlab server listening on %s", addr)
 	if err := http.ListenAndServe(addr, server.Routes()); err != nil {
