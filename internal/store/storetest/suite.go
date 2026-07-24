@@ -34,6 +34,7 @@ func Run(t *testing.T, newStore Factory) {
 		"SnapshotUpsert":              testSnapshotUpsert,
 		"ComparisonRoundTrip":         testComparisonRoundTrip,
 		"ConcurrentAppendsAreVisible": testConcurrentAppendsAreVisible,
+		"PingReportsReachable":        testPingReportsReachable,
 	}
 
 	for name, fn := range tests {
@@ -373,6 +374,12 @@ func testComparisonRoundTrip(t *testing.T, s store.Store) {
 	}
 	if _, ok := result["baseline"]; !ok {
 		t.Errorf("result payload not preserved: %v", result)
+	}
+}
+
+func testPingReportsReachable(t *testing.T, s store.Store) {
+	if err := s.Ping(context.Background()); err != nil {
+		t.Fatalf("Ping on an open store: %v", err)
 	}
 }
 

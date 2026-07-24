@@ -88,6 +88,9 @@ type Store interface {
 	SaveComparison(ctx context.Context, comparison Comparison) error
 	GetComparison(ctx context.Context, id string) (Comparison, error)
 
+	// Ping reports whether the store is reachable, so a readiness probe can
+	// answer for the database rather than only for the process.
+	Ping(ctx context.Context) error
 	Close() error
 }
 

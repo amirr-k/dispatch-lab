@@ -171,4 +171,6 @@ func (m *Memory) GetComparison(_ context.Context, id string) (Comparison, error)
 	return c, nil
 }
 
+func (m *Memory) Ping(_ context.Context) error { return nil }
+
 func (m *Memory) Close() error { return nil }

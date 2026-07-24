@@ -353,6 +353,14 @@ func TestRecorderWithoutStoreIsPassthrough(t *testing.T) {
 	if got := drain(out); len(got) != 2 {
 		t.Fatalf("forwarded %d events, want 2", len(got))
 	}
+
+	// a recorder with nothing to persist still has to report that it is
+	// finished, or shutdown waits out its whole flush timeout on it.
+	select {
+	case <-recorder.Done():
+	case <-time.After(time.Second):
+		t.Fatal("a store-less recorder never signalled Done")
+	}
 }
 
 func waitFor(t *testing.T, limit time.Duration, cond func() bool) {

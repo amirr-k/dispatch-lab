@@ -93,7 +93,10 @@ func NewRecorder(simulationID string, cfg RecorderConfig) *Recorder {
 func (r *Recorder) Tap(ctx context.Context, in <-chan domain.Event) <-chan domain.Event {
 	out := make(chan domain.Event, cap(in))
 	if r.cfg.Store == nil {
-		go forward(in, out)
+		go func() {
+			defer close(r.done)
+			forward(in, out)
+		}()
 		return out
 	}
 

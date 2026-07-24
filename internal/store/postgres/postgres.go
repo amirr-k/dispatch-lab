@@ -234,6 +234,10 @@ func (s *Store) GetComparison(ctx context.Context, id string) (store.Comparison,
 	return c, nil
 }
 
+func (s *Store) Ping(ctx context.Context) error {
+	return s.pool.Ping(ctx)
+}
+
 func (s *Store) Close() error {
 	s.pool.Close()
 	return nil
