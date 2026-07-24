@@ -43,10 +43,15 @@ type Reset struct{}
 // viewer. It only affects playback rate, never simulation outcomes.
 type SetSpeed struct{ Multiplier float64 }
 
+// CloseRoad closes both directions of the road segment the given edge
+// belongs to, invalidating any driver route that crosses it.
+type CloseRoad struct{ EdgeID domain.EdgeID }
+
 func (PlaceOrder) isCommand() {}
 func (SetPaused) isCommand()  {}
 func (Reset) isCommand()      {}
 func (SetSpeed) isCommand()   {}
+func (CloseRoad) isCommand()  {}
 
 // Simulation owns one simulation's state and runs its actor loop.
 type Simulation struct {
@@ -224,7 +229,129 @@ func (s *Simulation) handle(cmd Command) {
 		}
 	case Reset:
 		s.reset()
+	case CloseRoad:
+		s.handleCloseRoad(c)
 	}
+}
+
+// handleCloseRoad closes a road segment (both directions) and reroutes any
+// driver whose current path crosses it. A driver that can no longer reach
+// its target becomes idle again and its order is marked unassignable — the
+// explicit unreachable result the phase 3 exit gate calls for.
+func (s *Simulation) handleCloseRoad(c CloseRoad) {
+	edge, ok := s.City.EdgeByID(c.EdgeID)
+	if !ok || edge.Closed {
+		return
+	}
+
+	edgeIDs := []domain.EdgeID{edge.ID}
+	s.City.SetClosed(edge.ID, true)
+	if reverse, ok := edgeBetween(s.City, edge.To, edge.From); ok {
+		s.City.SetClosed(reverse.ID, true)
+		edgeIDs = append(edgeIDs, reverse.ID)
+	}
+
+	affected, recalcMs := s.recalculateAffectedRoutes()
+	s.emit(domain.EventRoadClosed, map[string]any{
+		"edgeIds":         edgeIDs,
+		"from":            edge.From,
+		"to":              edge.To,
+		"affectedRoutes":  affected,
+		"recalculationMs": recalcMs,
+	})
+}
+
+// edgeBetween looks up the directed edge from->to by endpoints rather than
+// ID, since a reverse edge's ID is a generator detail, not a domain
+// guarantee.
+func edgeBetween(city *domain.City, from, to domain.NodeID) (domain.Edge, bool) {
+	for _, e := range city.Edges[from] {
+		if e.To == to {
+			return e, true
+		}
+	}
+	return domain.Edge{}, false
+}
+
+// recalculateAffectedRoutes reroutes every driver whose current path now
+// crosses a closed edge. Returns how many drivers were affected and how long
+// recomputation took, both surfaced in the road.closed event.
+func (s *Simulation) recalculateAffectedRoutes() (int, float64) {
+	start := time.Now()
+
+	ids := make([]domain.DriverID, 0, len(s.drivers))
+	for id := range s.drivers {
+		ids = append(ids, id)
+	}
+	sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
+
+	affected := 0
+	for _, id := range ids {
+		d := s.drivers[id]
+		if len(d.Route) == 0 || !routeUsesClosedEdge(s.City, d.Route, d.RouteIndex) {
+			continue
+		}
+		affected++
+		s.rerouteDriver(id, d)
+	}
+
+	return affected, float64(time.Since(start).Microseconds()) / 1000.0
+}
+
+// routeUsesClosedEdge reports whether any remaining hop of route, starting
+// at fromIndex, now crosses a closed (or since-removed) edge.
+func routeUsesClosedEdge(city *domain.City, route []domain.NodeID, fromIndex int) bool {
+	for i := fromIndex; i < len(route)-1; i++ {
+		edge, ok := edgeBetween(city, route[i], route[i+1])
+		if !ok || edge.Closed {
+			return true
+		}
+	}
+	return false
+}
+
+// rerouteDriver recomputes a driver's path to whatever it was already
+// heading toward (pickup or destination, based on its status). If no path
+// exists, the order becomes unassignable and the driver returns to idle.
+func (s *Simulation) rerouteDriver(id domain.DriverID, d *domain.Driver) {
+	order := s.orders[d.AssignedOrder]
+	if order == nil {
+		return
+	}
+
+	var target domain.NodeID
+	var unreachableReason string
+	switch d.Status {
+	case domain.DriverEnRouteToPick:
+		target, unreachableReason = order.Pickup, "road closure left no path to the pickup"
+	case domain.DriverDelivering:
+		target, unreachableReason = order.Destination, "road closure left no path to the destination"
+	default:
+		return
+	}
+
+	s.emit(domain.EventRouteInvalidated, map[string]any{"driverId": id, "orderId": order.ID})
+
+	route, ok := routing.FindRoute(s.City, d.Position, target)
+	if !ok {
+		order.Status = domain.OrderUnassignable
+		s.emit(domain.EventOrderUnassignable, map[string]any{"orderId": order.ID, "reason": unreachableReason})
+
+		d.Status = domain.DriverIdle
+		d.Route = nil
+		d.RouteIndex = 0
+		d.AssignedOrder = ""
+		s.emit(domain.EventDriverStatusChanged, map[string]any{"driverId": id, "status": d.Status})
+		return
+	}
+
+	d.Route = route.Nodes
+	d.RouteIndex = 0
+	s.emit(domain.EventRouteComputed, map[string]any{
+		"driverId": id,
+		"nodeIds":  route.Nodes,
+		"distance": route.Distance,
+	})
 }
 
 // reset restores the initial seeded layout and announces it with a fresh
