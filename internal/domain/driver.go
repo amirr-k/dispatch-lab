@@ -24,4 +24,9 @@ type Driver struct {
 	// RouteIndex is the position of Position within Route.
 	RouteIndex    int
 	AssignedOrder OrderID
+	// IdleSince is the virtual time this driver last became idle. Used by
+	// optimized matching's driver-state cost term to favor drivers that
+	// have been waiting longest (utilization fairness), which greedy
+	// nearest-driver baseline matching has no notion of.
+	IdleSince float64
 }
