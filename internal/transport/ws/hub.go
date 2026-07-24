@@ -1,7 +1,10 @@
 // Package ws streams simulation events to browsers over WebSocket.
 package ws
 
-import "dispatchlab/internal/domain"
+import (
+	"dispatchlab/internal/domain"
+	"dispatchlab/internal/telemetry"
+)
 
 // Hub fans a single simulation's event stream out to any number of
 // subscribed connections. It owns no simulation state itself — it only
@@ -9,13 +12,21 @@ import "dispatchlab/internal/domain"
 type Hub struct {
 	subscribe   chan chan domain.Event
 	unsubscribe chan chan domain.Event
+	metrics     *telemetry.Metrics
 }
 
 // NewHub starts fanning out events from source until source closes.
 func NewHub(source <-chan domain.Event) *Hub {
+	return NewHubWithMetrics(source, nil)
+}
+
+// NewHubWithMetrics is NewHub with a metric set attached, so drops caused by
+// a slow client are counted rather than silently absorbed.
+func NewHubWithMetrics(source <-chan domain.Event, metrics *telemetry.Metrics) *Hub {
 	h := &Hub{
 		subscribe:   make(chan chan domain.Event),
 		unsubscribe: make(chan chan domain.Event),
+		metrics:     metrics,
 	}
 	go h.run(source)
 	return h
@@ -45,6 +56,7 @@ func (h *Hub) run(source <-chan domain.Event) {
 				case sub <- event:
 				default:
 					// slow subscriber: drop this event rather than block the hub.
+					h.metrics.DroppedUpdates().Inc()
 				}
 			}
 		}

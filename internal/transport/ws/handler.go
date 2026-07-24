@@ -1,10 +1,12 @@
 package ws
 
 import (
-	"log"
+	"context"
+	"log/slog"
 	"net/http"
 
 	"dispatchlab/internal/domain"
+	"dispatchlab/internal/telemetry"
 
 	"github.com/gorilla/websocket"
 )
@@ -28,8 +30,21 @@ type Lookup func(id string) (*Hub, Snapshotter, bool)
 // that reconnects resumes cleanly from a known sequence with no gap or
 // duplicate.
 func Handler(lookup Lookup) http.HandlerFunc {
+	return HandlerWithTelemetry(lookup, nil, nil)
+}
+
+// HandlerWithTelemetry is Handler with connection counting and per-event
+// publication tracing. An event that arrived carrying a trace gets a
+// publication span linked to it, which closes the loop from an HTTP command
+// to the moment its result reaches a browser.
+func HandlerWithTelemetry(lookup Lookup, metrics *telemetry.Metrics, logger *slog.Logger) http.HandlerFunc {
+	if logger == nil {
+		logger = slog.Default()
+	}
+
 	return func(w http.ResponseWriter, r *http.Request) {
-		hub, snap, ok := lookup(r.PathValue("id"))
+		id := r.PathValue("id")
+		hub, snap, ok := lookup(id)
 		if !ok {
 			http.NotFound(w, r)
 			return
@@ -37,10 +52,15 @@ func Handler(lookup Lookup) http.HandlerFunc {
 
 		conn, err := upgrader.Upgrade(w, r, nil)
 		if err != nil {
-			log.Printf("ws upgrade failed: %v", err)
+			logger.Warn("websocket upgrade failed", "simulation_id", id, "error", err)
 			return
 		}
 		defer conn.Close()
+
+		metrics.WebSocketClients().Inc()
+		defer metrics.WebSocketClients().Dec()
+		logger.Info("websocket client connected", "simulation_id", id)
+		defer logger.Info("websocket client disconnected", "simulation_id", id)
 
 		// detect client disconnect: a failed read closes the conn, which makes
 		// the write loop below fail and unwind.
@@ -71,9 +91,29 @@ func Handler(lookup Lookup) http.HandlerFunc {
 			if event.Sequence > lastSeq {
 				lastSeq = event.Sequence
 			}
-			if err := conn.WriteJSON(event); err != nil {
+			if err := publish(conn, event, logger); err != nil {
 				return
 			}
 		}
 	}
+}
+
+func publish(conn *websocket.Conn, event domain.Event, logger *slog.Logger) error {
+	if event.TraceID == "" {
+		return conn.WriteJSON(event)
+	}
+
+	ctx := telemetry.WithSpanContext(
+		telemetry.WithLogger(context.Background(), logger),
+		telemetry.SpanContext{TraceID: event.TraceID},
+	)
+	_, span := telemetry.StartSpan(ctx, "ws.publish",
+		slog.String("simulation_id", event.SimulationID),
+		slog.Int("sequence", event.Sequence),
+		slog.String("event_type", string(event.Type)))
+	defer span.End()
+
+	err := conn.WriteJSON(event)
+	span.RecordError(err)
+	return err
 }
