@@ -108,6 +108,81 @@ func TestPlaceOrderUnassignableWhenNoDriverIdle(t *testing.T) {
 	}
 }
 
+func TestPausedSimulationHoldsState(t *testing.T) {
+	s := New("sim", scenarioSeed, scenarioDrivers)
+	s.Start()
+	s.Apply(PlaceOrder{Pickup: scenarioPickup, Destination: scenarioDest})
+
+	evs := s.Apply(SetPaused{Paused: true})
+	if len(evs) != 1 || evs[0].Type != domain.EventSimulationPaused {
+		t.Fatalf("expected a single simulation.paused event, got %v", types(evs))
+	}
+	if m, ok := evs[0].Payload.(map[string]any); !ok || m["paused"] != true {
+		t.Fatalf("expected paused=true in payload, got %+v", evs[0].Payload)
+	}
+
+	before := s.virtualTime
+	for i := 0; i < 10; i++ {
+		if evs := s.Advance(); len(evs) != 0 {
+			t.Fatalf("expected no events while paused, got %v", types(evs))
+		}
+	}
+	if s.virtualTime != before {
+		t.Fatalf("expected virtual time to hold while paused, went from %v to %v", before, s.virtualTime)
+	}
+
+	resumeEvs := s.Apply(SetPaused{Paused: false})
+	if len(resumeEvs) != 1 || resumeEvs[0].Type != domain.EventSimulationPaused {
+		t.Fatalf("expected a single simulation.paused event on resume, got %v", types(resumeEvs))
+	}
+	if evs := s.Advance(); len(evs) == 0 {
+		t.Fatal("expected ticks to resume producing events after unpausing")
+	}
+}
+
+func TestSnapshotReflectsPausedAndSpeed(t *testing.T) {
+	s := New("sim", scenarioSeed, scenarioDrivers)
+	evs := s.Start()
+	payload := evs[0].Payload.(map[string]any)
+	if payload["paused"] != false || payload["speed"] != 1.0 {
+		t.Fatalf("expected fresh snapshot paused=false speed=1, got %+v", payload)
+	}
+
+	s.Apply(SetPaused{Paused: true})
+	s.Apply(SetSpeed{Multiplier: 4})
+
+	snap := s.buildSnapshotEvent()
+	got := snap.Payload.(map[string]any)
+	if got["paused"] != true || got["speed"] != 4.0 {
+		t.Fatalf("expected snapshot to reflect paused=true speed=4, got %+v", got)
+	}
+}
+
+func TestResetRestoresInitialState(t *testing.T) {
+	s := New("sim", scenarioSeed, scenarioDrivers)
+	s.Start()
+	s.Apply(PlaceOrder{Pickup: scenarioPickup, Destination: scenarioDest})
+	for i := 0; i < 5; i++ {
+		s.Advance()
+	}
+
+	evs := s.Apply(Reset{})
+	if len(evs) != 1 || evs[0].Type != domain.EventSimulationSnapshot {
+		t.Fatalf("expected reset to emit a fresh snapshot, got %v", types(evs))
+	}
+	if len(s.orders) != 0 {
+		t.Fatalf("expected orders cleared after reset, got %d", len(s.orders))
+	}
+	for _, d := range s.drivers {
+		if d.Status != domain.DriverIdle {
+			t.Fatalf("expected driver %s idle after reset, got %s", d.ID, d.Status)
+		}
+	}
+	if s.virtualTime != 0 {
+		t.Fatalf("expected virtual time reset to 0, got %v", s.virtualTime)
+	}
+}
+
 func TestDriverMovesAndDelivers(t *testing.T) {
 	s := New("sim", scenarioSeed, scenarioDrivers)
 	s.Start()

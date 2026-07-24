@@ -16,6 +16,8 @@ const (
 	EventRouteInvalidated     EventType = "route.invalidated"
 	EventRoadClosed           EventType = "road.closed"
 	EventRoadReopened         EventType = "road.reopened"
+	EventSimulationPaused     EventType = "simulation.paused"
+	EventSimulationSpeed      EventType = "simulation.speed.changed"
 )
 
 // Event is an immutable fact emitted by a simulation, ordered by Sequence.
