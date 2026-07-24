@@ -23,11 +23,36 @@ var (
 	ErrNotFound = errors.New("simulation not found")
 	ErrCapacity = errors.New("simulation capacity reached")
 	ErrBusy     = errors.New("simulation command buffer full")
+	// ErrOrderLimit means this run already holds as many orders as it may.
+	ErrOrderLimit = errors.New("simulation order limit reached")
 )
 
-// shutdownFlushTimeout bounds how long shutdown waits for recorders to write
-// their last batch before giving up on it.
-const shutdownFlushTimeout = 5 * time.Second
+const (
+	// shutdownFlushTimeout bounds how long shutdown waits for recorders to
+	// write their last batch before giving up on it.
+	shutdownFlushTimeout = 5 * time.Second
+	// maxOrdersPerRun bounds how many orders one simulation will accept, so
+	// a visitor holding down the mouse cannot grow a run's state without
+	// limit. Resetting a run clears the count along with the orders.
+	maxOrdersPerRun = 200
+)
+
+// tokenKey carries the requesting session's identity on the context. Putting
+// it there rather than in every method signature means the ownership check
+// lives in one place — submit — and a new command route cannot accidentally
+// skip it.
+type tokenKey struct{}
+
+// WithToken tags a context with the guest token making the request.
+func WithToken(ctx context.Context, token string) context.Context {
+	return context.WithValue(ctx, tokenKey{}, token)
+}
+
+// TokenFrom returns the guest token on a context, empty if there is none.
+func TokenFrom(ctx context.Context) string {
+	token, _ := ctx.Value(tokenKey{}).(string)
+	return token
+}
 
 // entry bundles a running simulation with its fanout hub, recorder, and
 // cancel handle.
@@ -36,6 +61,12 @@ type entry struct {
 	hub      *ws.Hub
 	recorder *replay.Recorder
 	cancel   context.CancelFunc
+	// owner is the guest token that created this run. Empty means the server
+	// created it — the seeded showcase runs — which are public.
+	owner string
+	// orders counts what has been placed, so one run cannot grow without
+	// bound.
+	orders int
 }
 
 // ManagerConfig configures a Manager. Every field is optional: with no store
@@ -47,6 +78,9 @@ type ManagerConfig struct {
 	Store   store.Store
 	Metrics *telemetry.Metrics
 	Logger  *slog.Logger
+	// Sessions enforces per-session quotas and supplies the retention window
+	// for anonymous runs. Nil disables both.
+	Sessions *Sessions
 }
 
 // Manager creates, tracks, and routes commands to simulations. Every method
@@ -71,9 +105,16 @@ func NewManagerWithConfig(cfg ManagerConfig) *Manager {
 	return &Manager{entries: make(map[string]*entry), cfg: cfg}
 }
 
-// Create starts a new simulation and its hub. An empty id is replaced with a
-// generated one. It returns the simulation's id.
-func (m *Manager) Create(id string, seed int64, drivers int) (string, error) {
+// Create starts a new simulation and its hub, owned by whichever session the
+// context identifies. An empty id is replaced with a generated one. It
+// returns the simulation's id.
+func (m *Manager) Create(ctx context.Context, id string, seed int64, drivers int) (string, error) {
+	owner := TokenFrom(ctx)
+
+	if err := m.checkQuota(ctx, owner); err != nil {
+		return "", err
+	}
+
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -96,9 +137,9 @@ func (m *Manager) Create(id string, seed int64, drivers int) (string, error) {
 		Metrics:     m.cfg.Metrics,
 		Logger:      m.cfg.Logger,
 	})
-	ctx, cancel := context.WithCancel(context.Background())
+	runCtx, cancel := context.WithCancel(context.Background())
 
-	m.recordSimulation(ctx, id, seed, drivers)
+	m.recordSimulation(runCtx, id, seed, drivers, owner)
 
 	// the recorder sits between the simulation and the hub so every event is
 	// persisted exactly once, rather than being one more subscriber the hub
@@ -110,33 +151,59 @@ func (m *Manager) Create(id string, seed int64, drivers int) (string, error) {
 		Logger:      m.cfg.Logger,
 	})
 
-	go sim.Run(ctx)
-	hub := ws.NewHubWithMetrics(recorder.Tap(ctx, sim.Events()), m.cfg.Metrics)
+	go sim.Run(runCtx)
+	hub := ws.NewHubWithMetrics(recorder.Tap(runCtx, sim.Events()), m.cfg.Metrics)
 
-	m.entries[id] = &entry{sim: sim, hub: hub, recorder: recorder, cancel: cancel}
+	m.entries[id] = &entry{sim: sim, hub: hub, recorder: recorder, cancel: cancel, owner: owner}
 	m.cfg.Metrics.ActiveSimulations().Set(float64(len(m.entries)))
 	m.cfg.Logger.Info("created simulation", "simulation_id", id, "seed", seed, "drivers", drivers)
 	return id, nil
 }
 
+// checkQuota refuses a session that already holds its allowance of runs.
+func (m *Manager) checkQuota(ctx context.Context, owner string) error {
+	if m.cfg.Sessions == nil || owner == "" {
+		return nil
+	}
+
+	m.mu.Lock()
+	held := 0
+	for _, e := range m.entries {
+		if e.owner == owner {
+			held++
+		}
+	}
+	m.mu.Unlock()
+
+	return m.cfg.Sessions.CheckQuota(ctx, owner, held)
+}
+
 // recordSimulation writes the metadata row a replay needs to name its run.
 // A failure is logged and counted, never fatal: a demo that cannot reach its
 // database should still run, just without a durable replay.
-func (m *Manager) recordSimulation(ctx context.Context, id string, seed int64, drivers int) {
+func (m *Manager) recordSimulation(ctx context.Context, id string, seed int64, drivers int, owner string) {
 	if m.cfg.Store == nil {
 		return
 	}
 	writeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 	defer cancel()
 
-	err := m.cfg.Store.CreateSimulation(writeCtx, store.Simulation{
-		ID:        id,
-		Seed:      seed,
-		Drivers:   drivers,
-		Strategy:  string(simulation.StrategyBaseline),
-		CreatedAt: time.Now().UTC(),
-	})
-	if err != nil {
+	sim := store.Simulation{
+		ID:         id,
+		Seed:       seed,
+		Drivers:    drivers,
+		Strategy:   string(simulation.StrategyBaseline),
+		CreatedAt:  time.Now().UTC(),
+		GuestToken: owner,
+	}
+	// an anonymous run is kept only for a while; marking it a showcase is
+	// what makes it permanent.
+	if m.cfg.Sessions != nil && owner != "" {
+		expiresAt := time.Now().UTC().Add(m.cfg.Sessions.RunTTL())
+		sim.ExpiresAt = &expiresAt
+	}
+
+	if err := m.cfg.Store.CreateSimulation(writeCtx, sim); err != nil {
 		m.cfg.Metrics.PersistenceErrors().Inc()
 		m.cfg.Logger.Error("could not record a simulation", "simulation_id", id, "error", err)
 	}
@@ -153,22 +220,63 @@ func (m *Manager) Get(id string) (*simulation.Simulation, bool) {
 	return e.sim, true
 }
 
-// StreamLookup resolves the fanout hub and snapshot source for a simulation.
-// It is the seam the WebSocket handler uses without importing this package's
-// concrete types.
-func (m *Manager) StreamLookup(id string) (*ws.Hub, ws.Snapshotter, bool) {
+// StreamLookup resolves the fanout hub and snapshot source for a simulation,
+// for the session identified by token. It is the seam the WebSocket handler
+// uses without importing this package's concrete types, and it applies the
+// same ownership rule the command routes do — a stream is exactly as private
+// as the run behind it.
+func (m *Manager) StreamLookup(id, token string) (*ws.Hub, ws.Snapshotter, bool) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	e, ok := m.entries[id]
 	if !ok {
 		return nil, nil, false
 	}
+	if authorize(e, token) != nil {
+		return nil, nil, false
+	}
 	return e.hub, e.sim, true
 }
 
-// PlaceOrder submits an order to a simulation.
+// PlaceOrder submits an order to a simulation, refusing once the run holds
+// as many as it may.
 func (m *Manager) PlaceOrder(ctx context.Context, id string, pickup, destination domain.NodeID) error {
-	return m.submit(ctx, id, simulation.PlaceOrder{Pickup: pickup, Destination: destination})
+	if err := m.reserveOrder(ctx, id); err != nil {
+		return err
+	}
+	if err := m.submit(ctx, id, simulation.PlaceOrder{Pickup: pickup, Destination: destination}); err != nil {
+		m.releaseOrder(id)
+		return err
+	}
+	return nil
+}
+
+// reserveOrder claims one of a run's order slots before the command is
+// submitted, so concurrent requests cannot both squeeze past the limit.
+func (m *Manager) reserveOrder(ctx context.Context, id string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	e, ok := m.entries[id]
+	if !ok {
+		return ErrNotFound
+	}
+	if err := authorize(e, TokenFrom(ctx)); err != nil {
+		return err
+	}
+	if e.orders >= maxOrdersPerRun {
+		return ErrOrderLimit
+	}
+	e.orders++
+	return nil
+}
+
+func (m *Manager) releaseOrder(id string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if e, ok := m.entries[id]; ok && e.orders > 0 {
+		e.orders--
+	}
 }
 
 // SetPaused pauses or resumes a simulation.
@@ -176,9 +284,18 @@ func (m *Manager) SetPaused(ctx context.Context, id string, paused bool) error {
 	return m.submit(ctx, id, simulation.SetPaused{Paused: paused})
 }
 
-// Reset returns a simulation to its initial seeded state.
+// Reset returns a simulation to its initial seeded state, which clears its
+// orders and therefore its order count.
 func (m *Manager) Reset(ctx context.Context, id string) error {
-	return m.submit(ctx, id, simulation.Reset{})
+	if err := m.submit(ctx, id, simulation.Reset{}); err != nil {
+		return err
+	}
+	m.mu.Lock()
+	if e, ok := m.entries[id]; ok {
+		e.orders = 0
+	}
+	m.mu.Unlock()
+	return nil
 }
 
 // SetSpeed changes a simulation's live playback rate.
@@ -191,8 +308,12 @@ func (m *Manager) CloseRoad(ctx context.Context, id string, edgeID domain.EdgeID
 	return m.submit(ctx, id, simulation.CloseRoad{EdgeID: edgeID})
 }
 
-// Snapshot returns a current-state snapshot event for a simulation.
-func (m *Manager) Snapshot(id string) (domain.Event, error) {
+// Snapshot returns a current-state snapshot event for a simulation the
+// session on ctx may see.
+func (m *Manager) Snapshot(ctx context.Context, id string) (domain.Event, error) {
+	if err := m.Authorize(ctx, id); err != nil {
+		return domain.Event{}, err
+	}
 	sim, ok := m.Get(id)
 	if !ok {
 		return domain.Event{}, ErrNotFound
@@ -210,6 +331,9 @@ func (m *Manager) MarkShowcase(ctx context.Context, id string) error {
 
 	sim, live := m.Get(id)
 	if live {
+		if err := m.Authorize(ctx, id); err != nil {
+			return err
+		}
 		m.writeFinalSnapshot(ctx, id, sim)
 	}
 
@@ -277,14 +401,43 @@ func (m *Manager) Shutdown() {
 }
 
 func (m *Manager) submit(ctx context.Context, id string, cmd simulation.Command) error {
-	sim, ok := m.Get(id)
+	m.mu.Lock()
+	e, ok := m.entries[id]
+	m.mu.Unlock()
 	if !ok {
 		return ErrNotFound
 	}
-	if !sim.TrySubmitCtx(ctx, cmd) {
+	if err := authorize(e, TokenFrom(ctx)); err != nil {
+		return err
+	}
+	if !e.sim.TrySubmitCtx(ctx, cmd) {
 		return ErrBusy
 	}
 	return nil
+}
+
+// authorize enforces that a run is only reachable by the session that made
+// it. A run with no owner was created by the server itself — the seeded
+// showcase runs — and is public.
+func authorize(e *entry, token string) error {
+	if e.owner == "" || e.owner == token {
+		return nil
+	}
+	// reported as not-found rather than forbidden: a visitor should not be
+	// able to learn that someone else's simulation id exists.
+	return ErrNotFound
+}
+
+// Authorize reports whether the session on ctx may act on a simulation. The
+// HTTP layer uses it for reads, which do not go through submit.
+func (m *Manager) Authorize(ctx context.Context, id string) error {
+	m.mu.Lock()
+	e, ok := m.entries[id]
+	m.mu.Unlock()
+	if !ok {
+		return ErrNotFound
+	}
+	return authorize(e, TokenFrom(ctx))
 }
 
 func generateID() string {

@@ -12,8 +12,11 @@ import (
 )
 
 var upgrader = websocket.Upgrader{
-	// the vertical slice serves its own frontend origin only; this is
-	// revisited once the frontend is deployed separately in phase 9.
+	// origin is validated by the transport's CORS middleware, which wraps
+	// this route too and rejects a disallowed origin before the upgrade is
+	// ever attempted. Repeating the check here with gorilla's default (which
+	// only compares against the Host header) would reject the deployed
+	// frontend, since it is served from a different origin than the API.
 	CheckOrigin: func(r *http.Request) bool { return true },
 }
 
@@ -22,8 +25,11 @@ type Snapshotter interface {
 	CurrentSnapshot() domain.Event
 }
 
-// Lookup resolves a simulation id to its fanout hub and snapshot source.
-type Lookup func(id string) (*Hub, Snapshotter, bool)
+// Lookup resolves a simulation id to its fanout hub and snapshot source. It
+// takes the request as well as the id because a stream is exactly as private
+// as the run behind it: whoever provides the lookup decides, from the
+// request's identity, whether this caller may attach.
+type Lookup func(r *http.Request, id string) (*Hub, Snapshotter, bool)
 
 // Handler streams one simulation's events to a browser. On connect it sends a
 // current snapshot and then only events newer than that snapshot, so a client
@@ -44,7 +50,7 @@ func HandlerWithTelemetry(lookup Lookup, metrics *telemetry.Metrics, logger *slo
 
 	return func(w http.ResponseWriter, r *http.Request) {
 		id := r.PathValue("id")
-		hub, snap, ok := lookup(id)
+		hub, snap, ok := lookup(r, id)
 		if !ok {
 			http.NotFound(w, r)
 			return

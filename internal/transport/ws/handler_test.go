@@ -18,7 +18,7 @@ import (
 // real service.Manager provides, without importing it (would create an
 // import cycle: service already imports ws).
 func testLookup(sim *simulation.Simulation, hub *Hub) Lookup {
-	return func(id string) (*Hub, Snapshotter, bool) {
+	return func(_ *http.Request, id string) (*Hub, Snapshotter, bool) {
 		if id != sim.ID {
 			return nil, nil, false
 		}

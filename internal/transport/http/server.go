@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"dispatchlab/internal/domain"
+	"dispatchlab/internal/ratelimit"
 	"dispatchlab/internal/replay"
 	"dispatchlab/internal/service"
 	"dispatchlab/internal/store"
@@ -29,28 +30,42 @@ const (
 
 // Server adapts the service Manager and comparison store to HTTP.
 type Server struct {
-	mgr     *service.Manager
-	compare *service.Comparisons
-	replay  *replay.Reader
-	store   store.Store
-	metrics *telemetry.Metrics
-	logger  *slog.Logger
+	mgr        *service.Manager
+	compare    *service.Comparisons
+	replay     *replay.Reader
+	store      store.Store
+	sessions   *service.Sessions
+	limiter    *ratelimit.Limiter
+	idempotent *idempotencyCache
+	origins    *originPolicy
+	metrics    *telemetry.Metrics
+	logger     *slog.Logger
 }
 
-// NewServer returns a server with no persistence or telemetry attached.
+// NewServer returns a server with no persistence, sessions, or telemetry
+// attached.
 func NewServer(mgr *service.Manager, compare *service.Comparisons) *Server {
 	return NewServerWithConfig(ServerConfig{Manager: mgr, Comparisons: compare})
 }
 
-// ServerConfig wires the server to the rest of the backend. Store, Metrics,
-// and Logger are optional; without a store the replay routes report that a
-// run has no persisted history.
+// ServerConfig wires the server to the rest of the backend. Everything but
+// the manager is optional: without a store the replay routes report that a
+// run has no persisted history, and without sessions every request is
+// treated as anonymous and unowned.
 type ServerConfig struct {
 	Manager     *service.Manager
 	Comparisons *service.Comparisons
 	Store       store.Store
+	Sessions    *service.Sessions
 	Metrics     *telemetry.Metrics
 	Logger      *slog.Logger
+	// AllowedOrigins is the browser origin allowlist. Empty is permissive,
+	// which is what makes a local vite dev server work against a clean clone.
+	AllowedOrigins []string
+	// RequestsPerSecond and RequestBurst configure the per-caller rate limit.
+	// A non-positive rate disables limiting.
+	RequestsPerSecond float64
+	RequestBurst      float64
 }
 
 // NewServerWithConfig returns a fully wired server.
@@ -59,11 +74,15 @@ func NewServerWithConfig(cfg ServerConfig) *Server {
 		cfg.Logger = slog.Default()
 	}
 	s := &Server{
-		mgr:     cfg.Manager,
-		compare: cfg.Comparisons,
-		store:   cfg.Store,
-		metrics: cfg.Metrics,
-		logger:  cfg.Logger,
+		mgr:        cfg.Manager,
+		compare:    cfg.Comparisons,
+		store:      cfg.Store,
+		sessions:   cfg.Sessions,
+		limiter:    limiterFor(cfg.RequestsPerSecond, cfg.RequestBurst),
+		idempotent: newIdempotencyCache(idempotencyTTL, idempotencyMaxEntries),
+		origins:    newOriginPolicy(cfg.AllowedOrigins),
+		metrics:    cfg.Metrics,
+		logger:     cfg.Logger,
 	}
 	if cfg.Store != nil {
 		s.replay = replay.NewReader(cfg.Store)
@@ -72,10 +91,11 @@ func NewServerWithConfig(cfg ServerConfig) *Server {
 }
 
 // Routes builds the full HTTP handler, including the WebSocket stream and
-// health checks, wrapped in request tracing and permissive dev CORS.
+// health checks, wrapped in the request middleware stack.
 func (s *Server) Routes() http.Handler {
 	mux := http.NewServeMux()
 
+	mux.HandleFunc("POST /api/v1/guest-sessions", s.createGuestSession)
 	mux.HandleFunc("POST /api/v1/simulations", s.createSimulation)
 	mux.HandleFunc("GET /api/v1/simulations/{id}", s.getSimulation)
 	mux.HandleFunc("POST /api/v1/simulations/{id}/orders", s.placeOrder)
@@ -87,7 +107,7 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("POST /api/v1/simulations/{id}/showcase", s.markShowcase)
 	mux.HandleFunc("GET /api/v1/simulations/{id}/replay", s.getReplay)
 	mux.HandleFunc("GET /api/v1/simulations/{id}/stream",
-		ws.HandlerWithTelemetry(s.mgr.StreamLookup, s.metrics, s.logger))
+		ws.HandlerWithTelemetry(s.streamLookup, s.metrics, s.logger))
 
 	mux.HandleFunc("POST /api/v1/comparisons", s.createComparison)
 	mux.HandleFunc("GET /api/v1/comparisons/{id}", s.getComparison)
@@ -96,7 +116,52 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("GET /health/ready", s.ready)
 	mux.HandleFunc("GET /metrics", s.serveMetrics)
 
-	return withCORS(withTelemetry(mux, s.logger))
+	// outermost first: reject a disallowed origin before doing any work, cap
+	// the body before reading it, throttle before authenticating (so an
+	// unauthenticated flood is cheap), then identify the caller, then dedupe
+	// their retries.
+	return chain(mux,
+		func(next http.Handler) http.Handler { return withCORS(next, s.origins) },
+		limitBody,
+		func(next http.Handler) http.Handler { return withTelemetry(next, s.logger) },
+		s.rateLimit,
+		s.authenticate,
+		s.idempotency,
+	)
+}
+
+// streamLookup adapts the manager's ownership-aware lookup to the WebSocket
+// handler, which only has the request to work from.
+func (s *Server) streamLookup(r *http.Request, id string) (*ws.Hub, ws.Snapshotter, bool) {
+	return s.mgr.StreamLookup(id, service.TokenFrom(r.Context()))
+}
+
+type guestSessionResponse struct {
+	Token     string    `json:"token"`
+	ExpiresAt time.Time `json:"expiresAt"`
+	Quota     int       `json:"simulationQuota"`
+}
+
+// createGuestSession issues the token every other route is scoped to. It is
+// the one route that cannot require a session of its own.
+func (s *Server) createGuestSession(w http.ResponseWriter, r *http.Request) {
+	if s.sessions == nil {
+		writeError(w, http.StatusServiceUnavailable, "no_sessions", "this server does not issue guest sessions")
+		return
+	}
+
+	session, err := s.sessions.Issue(r.Context())
+	if err != nil {
+		s.logger.Error("could not issue a guest session", "error", err)
+		writeError(w, http.StatusInternalServerError, "internal", "could not issue a guest session")
+		return
+	}
+
+	writeJSON(w, http.StatusCreated, guestSessionResponse{
+		Token:     session.Token,
+		ExpiresAt: session.ExpiresAt,
+		Quota:     s.sessions.Quota(),
+	})
 }
 
 type createRequest struct {
@@ -125,7 +190,7 @@ func (s *Server) createSimulation(w http.ResponseWriter, r *http.Request) {
 		drivers = clamp(*req.Drivers, 1, maxDrivers)
 	}
 
-	id, err := s.mgr.Create("", seed, drivers)
+	id, err := s.mgr.Create(r.Context(), "", seed, drivers)
 	if err != nil {
 		writeServiceError(w, err)
 		return
@@ -134,7 +199,7 @@ func (s *Server) createSimulation(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) getSimulation(w http.ResponseWriter, r *http.Request) {
-	snapshot, err := s.mgr.Snapshot(r.PathValue("id"))
+	snapshot, err := s.mgr.Snapshot(r.Context(), r.PathValue("id"))
 	if err != nil {
 		writeServiceError(w, err)
 		return
@@ -298,6 +363,13 @@ func (s *Server) getReplay(w http.ResponseWriter, r *http.Request) {
 	}
 
 	id := r.PathValue("id")
+	if !s.mayReadReplay(r, id) {
+		// not-found rather than forbidden: a visitor should not be able to
+		// probe which simulation ids exist.
+		writeError(w, http.StatusNotFound, "not_found", "no replay exists for that simulation")
+		return
+	}
+
 	query := r.URL.Query()
 
 	if raw := query.Get("at"); raw != "" {
@@ -332,6 +404,40 @@ func (s *Server) getReplay(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, log)
+}
+
+// mayReadReplay decides who can see a run's history. A showcase run is
+// public — that is what a stable replay URL means. Anything else belongs to
+// the session that created it. Runs with no owner were created by the server
+// itself and are public too.
+//
+// The replay route is deliberately outside the authentication middleware, so
+// a showcase link works for a visitor with no session at all; the ownership
+// check therefore happens here, against the token if one was supplied.
+func (s *Server) mayReadReplay(r *http.Request, id string) bool {
+	if s.store == nil {
+		return false
+	}
+
+	sim, err := s.store.GetSimulation(r.Context(), id)
+	if err != nil {
+		// no metadata row: either unknown, or a run whose owner was already
+		// pruned. Let the reader decide whether any history exists.
+		return true
+	}
+	if sim.Showcase || sim.GuestToken == "" {
+		return true
+	}
+
+	token := bearerToken(r)
+	if token == "" || s.sessions == nil {
+		return false
+	}
+	session, err := s.sessions.Validate(r.Context(), token)
+	if err != nil {
+		return false
+	}
+	return session.Token == sim.GuestToken
 }
 
 func intParam(raw string, fallback int) (int, error) {
@@ -418,24 +524,19 @@ func writeServiceError(w http.ResponseWriter, err error) {
 		writeError(w, http.StatusNotFound, "not_found", "simulation not found")
 	case errors.Is(err, service.ErrCapacity):
 		writeError(w, http.StatusTooManyRequests, "capacity", "simulation capacity reached")
+	case errors.Is(err, service.ErrQuota):
+		writeError(w, http.StatusTooManyRequests, "quota",
+			"this session already has as many simulations as it may; reset or reuse one")
+	case errors.Is(err, service.ErrOrderLimit):
+		writeError(w, http.StatusTooManyRequests, "order_limit",
+			"this simulation has as many orders as it may hold; reset it to continue")
+	case errors.Is(err, service.ErrForbidden):
+		writeError(w, http.StatusForbidden, "forbidden", "not your simulation")
 	case errors.Is(err, service.ErrBusy):
 		writeError(w, http.StatusServiceUnavailable, "busy", "simulation is busy, retry shortly")
 	default:
 		writeError(w, http.StatusInternalServerError, "internal", "unexpected error")
 	}
-}
-
-func withCORS(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Access-Control-Allow-Origin", "*")
-		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
-		w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
-		if r.Method == http.MethodOptions {
-			w.WriteHeader(http.StatusNoContent)
-			return
-		}
-		next.ServeHTTP(w, r)
-	})
 }
 
 func clamp(v, lo, hi int) int {

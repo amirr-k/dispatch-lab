@@ -11,7 +11,7 @@ import (
 
 func TestCreateAndGet(t *testing.T) {
 	m := NewManager(0)
-	id, err := m.Create("", 1, 4)
+	id, err := m.Create(context.Background(), "", 1, 4)
 	if err != nil {
 		t.Fatalf("create: %v", err)
 	}
@@ -25,11 +25,11 @@ func TestCreateAndGet(t *testing.T) {
 
 func TestCreateIsIdempotentForExplicitID(t *testing.T) {
 	m := NewManager(0)
-	first, err := m.Create("fixed", 1, 4)
+	first, err := m.Create(context.Background(), "fixed", 1, 4)
 	if err != nil {
 		t.Fatalf("create: %v", err)
 	}
-	second, err := m.Create("fixed", 1, 4)
+	second, err := m.Create(context.Background(), "fixed", 1, 4)
 	if err != nil {
 		t.Fatalf("second create: %v", err)
 	}
@@ -40,10 +40,10 @@ func TestCreateIsIdempotentForExplicitID(t *testing.T) {
 
 func TestCreateRespectsCapacity(t *testing.T) {
 	m := NewManager(1)
-	if _, err := m.Create("a", 1, 2); err != nil {
+	if _, err := m.Create(context.Background(), "a", 1, 2); err != nil {
 		t.Fatalf("first create: %v", err)
 	}
-	if _, err := m.Create("b", 1, 2); !errors.Is(err, ErrCapacity) {
+	if _, err := m.Create(context.Background(), "b", 1, 2); !errors.Is(err, ErrCapacity) {
 		t.Fatalf("expected ErrCapacity, got %v", err)
 	}
 }
@@ -72,14 +72,14 @@ func TestCommandsOnMissingSimulationReturnErrNotFound(t *testing.T) {
 	if err := m.CloseRoad(context.Background(), "missing", "e-a-b"); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("CloseRoad: expected ErrNotFound, got %v", err)
 	}
-	if _, err := m.Snapshot("missing"); !errors.Is(err, ErrNotFound) {
+	if _, err := m.Snapshot(context.Background(), "missing"); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("Snapshot: expected ErrNotFound, got %v", err)
 	}
 }
 
 func TestSnapshotReflectsPlacedOrder(t *testing.T) {
 	m := NewManager(0)
-	id, _ := m.Create("", 5, 4)
+	id, _ := m.Create(context.Background(), "", 5, 4)
 	defer m.Shutdown()
 
 	sim, _ := m.Get(id)
@@ -93,7 +93,7 @@ func TestSnapshotReflectsPlacedOrder(t *testing.T) {
 	// goroutine, so poll briefly for the driver to leave idle.
 	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {
-		snap, err := m.Snapshot(id)
+		snap, err := m.Snapshot(context.Background(), id)
 		if err != nil {
 			t.Fatalf("Snapshot: %v", err)
 		}
@@ -107,7 +107,7 @@ func TestSnapshotReflectsPlacedOrder(t *testing.T) {
 
 func TestCloseRoadReachesSimulation(t *testing.T) {
 	m := NewManager(0)
-	id, _ := m.Create("", 5, 4)
+	id, _ := m.Create(context.Background(), "", 5, 4)
 	defer m.Shutdown()
 
 	sim, _ := m.Get(id)
@@ -119,7 +119,7 @@ func TestCloseRoadReachesSimulation(t *testing.T) {
 
 	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {
-		snap, err := m.Snapshot(id)
+		snap, err := m.Snapshot(context.Background(), id)
 		if err != nil {
 			t.Fatalf("Snapshot: %v", err)
 		}
@@ -151,14 +151,14 @@ func edgeIsClosed(t *testing.T, snap domain.Event, edgeID domain.EdgeID) bool {
 
 func TestStreamLookupResolvesCreatedSimulation(t *testing.T) {
 	m := NewManager(0)
-	id, _ := m.Create("", 1, 2)
+	id, _ := m.Create(context.Background(), "", 1, 2)
 	defer m.Shutdown()
 
-	hub, snap, ok := m.StreamLookup(id)
+	hub, snap, ok := m.StreamLookup(id, "")
 	if !ok || hub == nil || snap == nil {
 		t.Fatal("expected StreamLookup to resolve hub and snapshotter for a live simulation")
 	}
-	if _, _, ok := m.StreamLookup("missing"); ok {
+	if _, _, ok := m.StreamLookup("missing", ""); ok {
 		t.Fatal("expected StreamLookup to report not found for an unknown id")
 	}
 }

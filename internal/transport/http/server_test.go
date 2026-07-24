@@ -258,12 +258,18 @@ func TestHealthEndpoints(t *testing.T) {
 func TestCORSPreflight(t *testing.T) {
 	s := newTestServer()
 	req := httptest.NewRequest(http.MethodOptions, "/api/v1/simulations", nil)
+	req.Header.Set("Origin", "http://localhost:5173")
 	rec := httptest.NewRecorder()
 	s.Routes().ServeHTTP(rec, req)
 	if rec.Code != http.StatusNoContent {
 		t.Fatalf("expected 204 for CORS preflight, got %d", rec.Code)
 	}
-	if rec.Header().Get("Access-Control-Allow-Origin") != "*" {
-		t.Fatal("expected CORS header on preflight response")
+	// the permitted origin is reflected rather than answered with a wildcard,
+	// so the response stays correct once an allowlist is configured.
+	if got := rec.Header().Get("Access-Control-Allow-Origin"); got != "http://localhost:5173" {
+		t.Fatalf("Access-Control-Allow-Origin = %q, want the request origin", got)
+	}
+	if rec.Header().Get("Vary") != "Origin" {
+		t.Error("a reflected origin must be accompanied by Vary: Origin")
 	}
 }
