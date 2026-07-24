@@ -23,18 +23,40 @@ const tickInterval = 500 * time.Millisecond
 // advances, independent of actual wall-clock elapsed since the last tick.
 const virtualStepPerTick = 1.0
 
-// PlaceOrder is a command to create an order and trigger assignment.
+// Command is a message applied to a simulation on its owning goroutine.
+type Command interface{ isCommand() }
+
+// PlaceOrder creates an order and triggers assignment.
 type PlaceOrder struct {
 	Pickup      domain.NodeID
 	Destination domain.NodeID
 }
 
+// SetPaused halts or resumes virtual-time advancement. Commands are still
+// accepted while paused.
+type SetPaused struct{ Paused bool }
+
+// Reset returns drivers and orders to their initial seeded state.
+type Reset struct{}
+
+// SetSpeed changes how fast wall-clock ticks advance virtual time for a live
+// viewer. It only affects playback rate, never simulation outcomes.
+type SetSpeed struct{ Multiplier float64 }
+
+func (PlaceOrder) isCommand() {}
+func (SetPaused) isCommand()  {}
+func (Reset) isCommand()      {}
+func (SetSpeed) isCommand()   {}
+
 // Simulation owns one simulation's state and runs its actor loop.
 type Simulation struct {
-	ID     string
-	Seed   int64
-	City   *domain.City
-	Status string // running | paused | completed
+	ID   string
+	Seed int64
+	City *domain.City
+
+	driverCount int
+	paused      bool
+	speed       float64
 
 	drivers map[domain.DriverID]*domain.Driver
 	orders  map[domain.OrderID]*domain.Order
@@ -42,8 +64,11 @@ type Simulation struct {
 	virtualTime float64
 	sequence    int
 
-	commands chan PlaceOrder
+	commands chan Command
 	events   chan domain.Event
+	// queries lets other goroutines request a current-state snapshot without
+	// touching simulation state directly; the reply is built on this loop.
+	queries chan chan domain.Event
 
 	// pending collects events emitted during a single step before they are
 	// either returned (headless stepping) or published to the channel (Run).
@@ -56,7 +81,23 @@ type Simulation struct {
 // driverCount drivers placed at deterministic starting nodes.
 func New(id string, seed int64, driverCount int) *Simulation {
 	c := city.GenerateGrid(city.DefaultGridConfig(seed))
+	return &Simulation{
+		ID:          id,
+		Seed:        seed,
+		City:        c,
+		driverCount: driverCount,
+		speed:       1,
+		drivers:     placeDrivers(c, driverCount),
+		orders:      make(map[domain.OrderID]*domain.Order),
+		commands:    make(chan Command, 32),
+		events:      make(chan domain.Event, 256),
+		queries:     make(chan chan domain.Event, 8),
+	}
+}
 
+// placeDrivers spreads driverCount idle drivers across sorted node positions
+// so the same seed and count always yield the same starting layout.
+func placeDrivers(c *domain.City, driverCount int) map[domain.DriverID]*domain.Driver {
 	nodeIDs := make([]domain.NodeID, 0, len(c.Nodes))
 	for nid := range c.Nodes {
 		nodeIDs = append(nodeIDs, nid)
@@ -72,17 +113,7 @@ func New(id string, seed int64, driverCount int) *Simulation {
 			Status:   domain.DriverIdle,
 		}
 	}
-
-	return &Simulation{
-		ID:       id,
-		Seed:     seed,
-		City:     c,
-		Status:   "running",
-		drivers:  drivers,
-		orders:   make(map[domain.OrderID]*domain.Order),
-		commands: make(chan PlaceOrder, 32),
-		events:   make(chan domain.Event, 256),
-	}
+	return drivers
 }
 
 func shortID(prefix string, i int) string {
@@ -96,8 +127,28 @@ func (s *Simulation) Events() <-chan domain.Event {
 
 // Submit enqueues a command for the simulation's actor loop. It never
 // blocks the caller on simulation progress beyond the channel's capacity.
-func (s *Simulation) Submit(cmd PlaceOrder) {
+func (s *Simulation) Submit(cmd Command) {
 	s.commands <- cmd
+}
+
+// CurrentSnapshot returns a snapshot of live state built on the actor loop,
+// so it never races with command handling. Only valid while Run is active.
+func (s *Simulation) CurrentSnapshot() domain.Event {
+	reply := make(chan domain.Event, 1)
+	s.queries <- reply
+	return <-reply
+}
+
+// TrySubmit enqueues a command without blocking. It returns false when the
+// command buffer is full, giving callers an explicit overflow signal rather
+// than stalling a request on simulation progress.
+func (s *Simulation) TrySubmit(cmd Command) bool {
+	select {
+	case s.commands <- cmd:
+		return true
+	default:
+		return false
+	}
 }
 
 // Run is the actor loop: the only goroutine that ever mutates simulation
@@ -105,7 +156,7 @@ func (s *Simulation) Submit(cmd PlaceOrder) {
 // headless Start/Apply/Advance stepping methods on a given simulation, never
 // both — they share the same underlying state.
 func (s *Simulation) Run(ctx context.Context) {
-	ticker := time.NewTicker(tickInterval)
+	ticker := time.NewTicker(s.tickDuration())
 	defer ticker.Stop()
 	defer close(s.events)
 
@@ -117,13 +168,29 @@ func (s *Simulation) Run(ctx context.Context) {
 		case <-ctx.Done():
 			return
 		case cmd := <-s.commands:
-			s.handlePlaceOrder(cmd)
+			prevSpeed := s.speed
+			s.handle(cmd)
 			s.publish()
+			if s.speed != prevSpeed {
+				ticker.Reset(s.tickDuration())
+			}
+		case reply := <-s.queries:
+			reply <- s.buildSnapshotEvent()
 		case <-ticker.C:
 			s.tick()
 			s.publish()
 		}
 	}
+}
+
+// tickDuration is the wall-clock gap between ticks at the current speed. A
+// higher speed multiplier means ticks fire more often; virtual time still
+// advances by the same fixed step each tick.
+func (s *Simulation) tickDuration() time.Duration {
+	if s.speed <= 0 {
+		return tickInterval
+	}
+	return time.Duration(float64(tickInterval) / s.speed)
 }
 
 // Start emits the initial snapshot and returns it. Headless counterpart to
@@ -136,9 +203,51 @@ func (s *Simulation) Start() []domain.Event {
 // Apply runs one command and returns the events it produced, with no
 // dependence on wall-clock time. Used by comparison and replay runners and
 // by determinism tests.
-func (s *Simulation) Apply(cmd PlaceOrder) []domain.Event {
-	s.handlePlaceOrder(cmd)
+func (s *Simulation) Apply(cmd Command) []domain.Event {
+	s.handle(cmd)
 	return s.takePending()
+}
+
+// handle dispatches a command to its state transition. All mutation happens
+// here, on the actor goroutine (or synchronously in headless stepping).
+func (s *Simulation) handle(cmd Command) {
+	switch c := cmd.(type) {
+	case PlaceOrder:
+		s.handlePlaceOrder(c)
+	case SetPaused:
+		s.paused = c.Paused
+	case SetSpeed:
+		if c.Multiplier > 0 {
+			s.speed = c.Multiplier
+		}
+	case Reset:
+		s.reset()
+	}
+}
+
+// reset restores the initial seeded layout and announces it with a fresh
+// snapshot. The event sequence keeps counting so downstream consumers still
+// see a monotonic stream across the reset.
+func (s *Simulation) reset() {
+	s.drivers = placeDrivers(s.City, s.driverCount)
+	s.orders = make(map[domain.OrderID]*domain.Order)
+	s.virtualTime = 0
+	s.nextOrderID = 0
+	s.emit(domain.EventSimulationSnapshot, s.snapshotPayload())
+}
+
+// buildSnapshotEvent describes current state without emitting into the
+// sequenced stream; it reuses the last sequence number so a reconnecting
+// client knows which live events still follow.
+func (s *Simulation) buildSnapshotEvent() domain.Event {
+	return domain.Event{
+		SchemaVersion: 1,
+		SimulationID:  s.ID,
+		Sequence:      s.sequence,
+		VirtualTime:   s.virtualTime,
+		Type:          domain.EventSimulationSnapshot,
+		Payload:       s.snapshotPayload(),
+	}
 }
 
 // Advance steps virtual time forward by one deterministic tick and returns
@@ -290,8 +399,12 @@ func (s *Simulation) handlePlaceOrder(cmd PlaceOrder) {
 }
 
 // tick advances virtual time by a fixed deterministic step and moves every
-// en-route driver one node forward along its route.
+// en-route driver one node forward along its route. A paused simulation
+// holds its state and emits nothing.
 func (s *Simulation) tick() {
+	if s.paused {
+		return
+	}
 	s.virtualTime += virtualStepPerTick
 
 	ids := make([]domain.DriverID, 0, len(s.drivers))
