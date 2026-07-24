@@ -231,7 +231,7 @@ func newTestSimulation(city *domain.City, drivers map[domain.DriverID]*domain.Dr
 		City:     city,
 		drivers:  drivers,
 		orders:   make(map[domain.OrderID]*domain.Order),
-		commands: make(chan Command, 8),
+		commands: make(chan envelope, 8),
 		events:   make(chan domain.Event, 64),
 		queries:  make(chan chan domain.Event, 4),
 		speed:    1,

@@ -6,6 +6,7 @@ package simulation
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"sort"
 	"time"
 
@@ -14,6 +15,7 @@ import (
 	"dispatchlab/internal/matching"
 	"dispatchlab/internal/routing"
 	"dispatchlab/internal/spatial"
+	"dispatchlab/internal/telemetry"
 )
 
 // tickInterval is wall-clock only: it paces how fast virtual time is
@@ -54,6 +56,11 @@ type Config struct {
 	// CostWeights configures optimized matching's cost function. Defaults
 	// to matching.DefaultCostWeights() if left zero-valued.
 	CostWeights matching.CostWeights
+	// Metrics and Logger are optional. A nil Metrics records nothing and a
+	// nil Logger falls back to the default one, so headless callers like the
+	// comparison runner need neither.
+	Metrics *telemetry.Metrics
+	Logger  *slog.Logger
 }
 
 // Command is a message applied to a simulation on its owning goroutine.
@@ -79,6 +86,13 @@ type SetSpeed struct{ Multiplier float64 }
 // CloseRoad closes both directions of the road segment the given edge
 // belongs to, invalidating any driver route that crosses it.
 type CloseRoad struct{ EdgeID domain.EdgeID }
+
+// envelope carries a command together with the trace it belongs to, so a
+// request's trace survives the hop onto the simulation's own goroutine.
+type envelope struct {
+	cmd   Command
+	trace telemetry.SpanContext
+}
 
 func (PlaceOrder) isCommand() {}
 func (SetPaused) isCommand()  {}
@@ -122,7 +136,15 @@ type Simulation struct {
 	virtualTime float64
 	sequence    int
 
-	commands chan Command
+	metrics *telemetry.Metrics
+	logger  *slog.Logger
+	// currentTrace is the trace of the command being handled right now. Every
+	// event emitted while it is set carries it, which is what connects an
+	// HTTP request to the events a browser eventually renders. Only ever
+	// touched on the actor goroutine.
+	currentTrace string
+
+	commands chan envelope
 	events   chan domain.Event
 	// queries lets other goroutines request a current-state snapshot without
 	// touching simulation state directly; the reply is built on this loop.
@@ -158,6 +180,9 @@ func NewWithConfig(cfg Config) *Simulation {
 	if cfg.CostWeights == (matching.CostWeights{}) {
 		cfg.CostWeights = matching.DefaultCostWeights()
 	}
+	if cfg.Logger == nil {
+		cfg.Logger = slog.Default()
+	}
 
 	gridCfg := city.DefaultGridConfig(cfg.Seed)
 	c := city.GenerateGrid(gridCfg)
@@ -187,7 +212,9 @@ func NewWithConfig(cfg Config) *Simulation {
 		gridCellSize:       gridCfg.CellSpacing,
 		drivers:            drivers,
 		orders:             make(map[domain.OrderID]*domain.Order),
-		commands:           make(chan Command, 32),
+		metrics:            cfg.Metrics,
+		logger:             cfg.Logger,
+		commands:           make(chan envelope, 32),
 		events:             make(chan domain.Event, 256),
 		queries:            make(chan chan domain.Event, 8),
 	}
@@ -226,7 +253,14 @@ func (s *Simulation) Events() <-chan domain.Event {
 // Submit enqueues a command for the simulation's actor loop. It never
 // blocks the caller on simulation progress beyond the channel's capacity.
 func (s *Simulation) Submit(cmd Command) {
-	s.commands <- cmd
+	s.commands <- envelope{cmd: cmd}
+}
+
+// SubmitCtx enqueues a command and carries ctx's trace onto the actor
+// goroutine, so the events the command produces can be tied back to the
+// request that sent it.
+func (s *Simulation) SubmitCtx(ctx context.Context, cmd Command) {
+	s.commands <- envelope{cmd: cmd, trace: telemetry.SpanContextFrom(ctx)}
 }
 
 // CurrentSnapshot returns a snapshot of live state built on the actor loop,
@@ -276,8 +310,13 @@ func (s *Simulation) TotalAssignmentComputeMs() float64 {
 // command buffer is full, giving callers an explicit overflow signal rather
 // than stalling a request on simulation progress.
 func (s *Simulation) TrySubmit(cmd Command) bool {
+	return s.TrySubmitCtx(context.Background(), cmd)
+}
+
+// TrySubmitCtx is TrySubmit carrying ctx's trace onto the actor goroutine.
+func (s *Simulation) TrySubmitCtx(ctx context.Context, cmd Command) bool {
 	select {
-	case s.commands <- cmd:
+	case s.commands <- envelope{cmd: cmd, trace: telemetry.SpanContextFrom(ctx)}:
 		return true
 	default:
 		return false
@@ -300,9 +339,9 @@ func (s *Simulation) Run(ctx context.Context) {
 		select {
 		case <-ctx.Done():
 			return
-		case cmd := <-s.commands:
+		case env := <-s.commands:
 			prevSpeed := s.speed
-			s.handle(cmd)
+			s.handleTraced(env)
 			s.publish()
 			if s.speed != prevSpeed {
 				ticker.Reset(s.tickDuration())
@@ -339,6 +378,28 @@ func (s *Simulation) Start() []domain.Event {
 func (s *Simulation) Apply(cmd Command) []domain.Event {
 	s.handle(cmd)
 	return s.takePending()
+}
+
+// handleTraced applies a command inside a span that continues the trace the
+// submitting request started, and stamps that trace onto every event the
+// command emits.
+func (s *Simulation) handleTraced(env envelope) {
+	if !env.trace.Valid() {
+		s.handle(env.cmd)
+		return
+	}
+
+	ctx := telemetry.WithSpanContext(telemetry.WithLogger(context.Background(), s.logger), env.trace)
+	_, span := telemetry.StartSpan(ctx, "simulation.apply",
+		slog.String("simulation_id", s.ID), slog.String("command", fmt.Sprintf("%T", env.cmd)))
+	defer span.End()
+
+	s.currentTrace = span.TraceID()
+	defer func() { s.currentTrace = "" }()
+
+	before := s.sequence
+	s.handle(env.cmd)
+	span.SetAttrs(slog.Int("events", s.sequence-before))
 }
 
 // handle dispatches a command to its state transition. All mutation happens
@@ -460,7 +521,7 @@ func (s *Simulation) rerouteDriver(id domain.DriverID, d *domain.Driver) {
 
 	s.emit(domain.EventRouteInvalidated, map[string]any{"driverId": id, "orderId": order.ID})
 
-	route, ok := routing.FindRoute(s.City, d.Position, target)
+	route, ok := s.findRoute(d.Position, target)
 	if !ok {
 		order.Status = domain.OrderUnassignable
 		s.emit(domain.EventOrderUnassignable, map[string]any{"orderId": order.ID, "reason": unreachableReason})
@@ -616,7 +677,18 @@ func (s *Simulation) emit(t domain.EventType, payload any) {
 		VirtualTime:   s.virtualTime,
 		Type:          t,
 		Payload:       payload,
+		TraceID:       s.currentTrace,
 	})
+}
+
+// findRoute computes one route and records how long it took. Route
+// computations inside a matching call are not counted here; those are covered
+// by the match latency metric, which times the whole matching call.
+func (s *Simulation) findRoute(from, to domain.NodeID) (routing.Route, bool) {
+	start := time.Now()
+	route, ok := routing.FindRoute(s.City, from, to)
+	s.metrics.RouteLatency().Observe(telemetry.DurationMs(time.Since(start)))
+	return route, ok
 }
 
 func (s *Simulation) handlePlaceOrder(cmd PlaceOrder) {
@@ -647,8 +719,9 @@ func (s *Simulation) handlePlaceOrder(cmd PlaceOrder) {
 
 	start := time.Now()
 	driverID, toPickup, ok := matching.Baseline(s.City, s.drivers, cmd.Pickup)
-	computeMs := float64(time.Since(start).Microseconds()) / 1000.0
+	computeMs := telemetry.DurationMs(time.Since(start))
 	s.totalAssignmentComputeMs += computeMs
+	s.metrics.MatchLatency().Observe(computeMs)
 
 	if !ok {
 		order.Status = domain.OrderUnassignable
@@ -681,6 +754,7 @@ func (s *Simulation) runBatch() {
 		s.City, s.drivers, orders, s.driverIndex, s.candidatesPerOrder, s.costWeights, s.virtualTime,
 	)
 	s.totalAssignmentComputeMs += computeMs
+	s.metrics.MatchLatency().Observe(computeMs)
 
 	resolved := make(map[domain.OrderID]bool, len(assigned)+len(infeasible))
 	for _, a := range assigned {
@@ -712,7 +786,7 @@ func (s *Simulation) runBatch() {
 // pairing.
 func (s *Simulation) applyAssignment(a matching.Assignment, computeMs float64) {
 	order := s.orders[a.OrderID]
-	toDestination, ok := routing.FindRoute(s.City, order.Pickup, order.Destination)
+	toDestination, ok := s.findRoute(order.Pickup, order.Destination)
 	if !ok {
 		order.Status = domain.OrderUnassignable
 		s.emit(domain.EventOrderUnassignable, map[string]any{
