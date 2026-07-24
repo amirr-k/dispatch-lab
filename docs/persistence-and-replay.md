@@ -11,7 +11,9 @@
 
 Event and snapshot payloads are `jsonb`. The store never interprets them, which means a new event type needs no migration.
 
-Guest sessions are listed in the spec's persistence rules but have no table yet — they arrive with the guest tokens and quotas in phase 6, and a table with no writer would only be dead schema.
+`guest_sessions` holds anonymous visitor identities, and `simulations` carries the token that owns each run plus the time an anonymous run becomes eligible for pruning. See [security.md](security.md) for what a session may reach.
+
+Retention is enforced by a sweep every 5 minutes: anonymous runs older than 2 hours are deleted along with their events and snapshots, and expired sessions go too. Showcase runs are never swept. The foreign key from a run to its session is `on delete set null`, not cascade, which is exactly why a saved replay URL outlives the session that produced it.
 
 ## Write policy
 

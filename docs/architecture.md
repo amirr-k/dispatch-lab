@@ -43,11 +43,14 @@ internal/telemetry   Metrics, structured logs, traces.
 
 | Risk | Mitigation |
 |---|---|
-| Unbounded simulations exhaust memory/CPU | Guest token per session, per-token quota, global concurrent-simulation cap |
-| Command flooding | Per-connection rate limiting, bounded command queue with rejection past capacity |
-| Slow client stalls simulation progress | Simulation goroutine never blocks on client send; bounded outbound queue with drop-oldest overflow |
-| Guessing another visitor's simulation ID | Unguessable UUIDs, scoped to the issuing guest token |
+| Unbounded simulations exhaust memory/CPU | Guest token per session, per-session quota, global concurrent-simulation cap, per-run order cap |
+| Command flooding | Per-caller token-bucket rate limiting, bounded command queue with rejection past capacity |
+| Slow client stalls simulation progress | Simulation goroutine never blocks on client send; bounded outbound queue, drops counted not hidden |
+| Reaching another visitor's simulation | Ownership enforced inside the manager, reported as 404 so ids cannot be probed |
+| Duplicate commands from a retried request | Per-session idempotency keys replay the original outcome |
 | Arbitrary code execution via crafted input | All input validated server-side against domain constraints; no user-supplied code is ever evaluated |
+
+Full detail, including every limit and its reasoning: [security.md](security.md).
 
 ## WebSocket protocol
 
@@ -75,5 +78,8 @@ Details — write batching, the position-update policy, reconstruction, and migr
 |---|---|---|
 | `ADDR` | `:8080` | Listen address. |
 | `DATABASE_URL` | *(unset)* | Postgres connection string. Unset falls back to in-memory storage, and replays then last only as long as the process. |
+| `ALLOWED_ORIGINS` | *(unset)* | Comma-separated browser origin allowlist. Unset is permissive, which is what lets a local dev server work against a clean clone. |
+| `RATE_LIMIT_PER_SECOND` | `10` | Sustained request rate per caller. Non-positive disables limiting. |
+| `RATE_LIMIT_BURST` | `30` | How much a caller may spend at once. |
 | `LOG_FORMAT` | `json` | `text` for readable local output. |
 | `LOG_LEVEL` | `info` | Standard slog levels. |
