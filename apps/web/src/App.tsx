@@ -1,11 +1,13 @@
 import { useState } from "react";
 import { CityMap } from "./CityMap";
+import { markShowcase } from "./api";
 import { useSimulation } from "./useSimulation";
 
 const SPEEDS = [1, 2, 4];
 
 function App() {
   const {
+    simulationId,
     connected,
     nodes,
     edges,
@@ -24,6 +26,19 @@ function App() {
   } = useSimulation();
 
   const [pickup, setPickup] = useState<string | null>(null);
+  const [replayUrl, setReplayUrl] = useState<string | null>(null);
+  const [saveError, setSaveError] = useState<string | null>(null);
+
+  async function saveReplay() {
+    if (!simulationId) return;
+    setSaveError(null);
+    try {
+      const saved = await markShowcase(simulationId);
+      setReplayUrl(saved.replayUrl);
+    } catch (err) {
+      setSaveError(err instanceof Error ? err.message : "could not save this run");
+    }
+  }
 
   function handleNodeClick(nodeId: string) {
     if (!pickup) {
@@ -48,6 +63,15 @@ function App() {
           <a href="/compare" style={{ color: "#9aa4b2" }}>
             Compare Algorithms
           </a>
+          {replayUrl ? (
+            <a href={replayUrl} style={{ color: "#22c55e" }}>
+              Open saved replay
+            </a>
+          ) : (
+            <button onClick={saveReplay} disabled={!simulationId} title="Keep this run at a permanent URL">
+              Save replay
+            </button>
+          )}
           <button onClick={togglePaused}>{paused ? "Resume" : "Pause"}</button>
           <button onClick={reset}>Reset</button>
           <select value={speed} onChange={(e) => changeSpeed(Number(e.target.value))}>
@@ -60,7 +84,7 @@ function App() {
         </div>
       </header>
 
-      <MetricsStrip metrics={metrics} pickup={pickup} actionError={actionError} />
+      <MetricsStrip metrics={metrics} pickup={pickup} actionError={actionError ?? saveError} />
 
       <div style={{ display: "flex", flex: 1, minHeight: 0 }}>
         <main style={{ flex: 1, position: "relative" }}>
