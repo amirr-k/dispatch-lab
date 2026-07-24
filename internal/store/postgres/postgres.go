@@ -48,28 +48,82 @@ func Open(ctx context.Context, databaseURL string) (*Store, error) {
 // reset schema state between runs.
 func (s *Store) Pool() *pgxpool.Pool { return s.pool }
 
+func (s *Store) CreateGuestSession(ctx context.Context, session store.GuestSession) error {
+	const query = `
+		insert into guest_sessions (token, created_at, last_seen_at, expires_at)
+		values ($1, $2, $3, $4)
+		on conflict (token) do nothing`
+
+	now := time.Now().UTC()
+	createdAt, lastSeen := session.CreatedAt, session.LastSeenAt
+	if createdAt.IsZero() {
+		createdAt = now
+	}
+	if lastSeen.IsZero() {
+		lastSeen = now
+	}
+	_, err := s.pool.Exec(ctx, query, session.Token, createdAt, lastSeen, session.ExpiresAt)
+	return err
+}
+
+func (s *Store) GetGuestSession(ctx context.Context, token string) (store.GuestSession, error) {
+	const query = `select token, created_at, last_seen_at, expires_at from guest_sessions where token = $1`
+
+	var session store.GuestSession
+	err := s.pool.QueryRow(ctx, query, token).Scan(
+		&session.Token, &session.CreatedAt, &session.LastSeenAt, &session.ExpiresAt,
+	)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return store.GuestSession{}, store.ErrNotFound
+	}
+	if err != nil {
+		return store.GuestSession{}, err
+	}
+	return session, nil
+}
+
+func (s *Store) TouchGuestSession(ctx context.Context, token string, lastSeen, expiresAt time.Time) error {
+	const query = `update guest_sessions set last_seen_at = $2, expires_at = $3 where token = $1`
+
+	tag, err := s.pool.Exec(ctx, query, token, lastSeen, expiresAt)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return store.ErrNotFound
+	}
+	return nil
+}
+
 func (s *Store) CreateSimulation(ctx context.Context, sim store.Simulation) error {
 	const query = `
-		insert into simulations (id, seed, drivers, strategy, created_at, completed_at, showcase)
-		values ($1, $2, $3, $4, $5, $6, $7)
+		insert into simulations (id, seed, drivers, strategy, created_at, completed_at, showcase, guest_token, expires_at)
+		values ($1, $2, $3, $4, $5, $6, $7, $8, $9)
 		on conflict (id) do nothing`
 
 	createdAt := sim.CreatedAt
 	if createdAt.IsZero() {
 		createdAt = time.Now().UTC()
 	}
-	_, err := s.pool.Exec(ctx, query, sim.ID, sim.Seed, sim.Drivers, sim.Strategy, createdAt, sim.CompletedAt, sim.Showcase)
+	var token any
+	if sim.GuestToken != "" {
+		token = sim.GuestToken
+	}
+	_, err := s.pool.Exec(ctx, query, sim.ID, sim.Seed, sim.Drivers, sim.Strategy,
+		createdAt, sim.CompletedAt, sim.Showcase, token, sim.ExpiresAt)
 	return err
 }
 
 func (s *Store) GetSimulation(ctx context.Context, id string) (store.Simulation, error) {
 	const query = `
-		select id, seed, drivers, strategy, created_at, completed_at, showcase
+		select id, seed, drivers, strategy, created_at, completed_at, showcase,
+		       coalesce(guest_token, ''), expires_at
 		from simulations where id = $1`
 
 	var sim store.Simulation
 	err := s.pool.QueryRow(ctx, query, id).Scan(
-		&sim.ID, &sim.Seed, &sim.Drivers, &sim.Strategy, &sim.CreatedAt, &sim.CompletedAt, &sim.Showcase,
+		&sim.ID, &sim.Seed, &sim.Drivers, &sim.Strategy, &sim.CreatedAt, &sim.CompletedAt,
+		&sim.Showcase, &sim.GuestToken, &sim.ExpiresAt,
 	)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return store.Simulation{}, store.ErrNotFound
@@ -78,6 +132,44 @@ func (s *Store) GetSimulation(ctx context.Context, id string) (store.Simulation,
 		return store.Simulation{}, err
 	}
 	return sim, nil
+}
+
+func (s *Store) CountSimulationsForToken(ctx context.Context, token string) (int, error) {
+	const query = `select count(*) from simulations where guest_token = $1`
+
+	var count int
+	if err := s.pool.QueryRow(ctx, query, token).Scan(&count); err != nil {
+		return 0, err
+	}
+	return count, nil
+}
+
+// PurgeExpired removes anonymous runs and dead sessions in one transaction.
+// Events and snapshots go with their simulation through the foreign key
+// cascade; a showcase run survives its session expiring because that foreign
+// key is on delete set null, not cascade.
+func (s *Store) PurgeExpired(ctx context.Context, now time.Time) (store.PurgeResult, error) {
+	var result store.PurgeResult
+
+	err := s.inTx(ctx, func(tx pgx.Tx) error {
+		tag, err := tx.Exec(ctx,
+			`delete from simulations where showcase = false and expires_at is not null and expires_at <= $1`, now)
+		if err != nil {
+			return err
+		}
+		result.Simulations = int(tag.RowsAffected())
+
+		tag, err = tx.Exec(ctx, `delete from guest_sessions where expires_at <= $1`, now)
+		if err != nil {
+			return err
+		}
+		result.Sessions = int(tag.RowsAffected())
+		return nil
+	})
+	if err != nil {
+		return store.PurgeResult{}, err
+	}
+	return result, nil
 }
 
 func (s *Store) MarkShowcase(ctx context.Context, id string, completedAt time.Time) error {

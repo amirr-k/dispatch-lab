@@ -13,6 +13,7 @@ import (
 // the life of the process; the deployed path is the Postgres store.
 type Memory struct {
 	mu          sync.RWMutex
+	sessions    map[string]GuestSession
 	simulations map[string]Simulation
 	events      map[string][]Event
 	seen        map[string]map[int]bool
@@ -23,12 +24,91 @@ type Memory struct {
 // NewMemory returns an empty in-memory store.
 func NewMemory() *Memory {
 	return &Memory{
+		sessions:    make(map[string]GuestSession),
 		simulations: make(map[string]Simulation),
 		events:      make(map[string][]Event),
 		seen:        make(map[string]map[int]bool),
 		snapshots:   make(map[string][]Snapshot),
 		comparisons: make(map[string]Comparison),
 	}
+}
+
+func (m *Memory) CreateGuestSession(_ context.Context, session GuestSession) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if _, exists := m.sessions[session.Token]; exists {
+		return nil
+	}
+	m.sessions[session.Token] = session
+	return nil
+}
+
+func (m *Memory) GetGuestSession(_ context.Context, token string) (GuestSession, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	session, ok := m.sessions[token]
+	if !ok {
+		return GuestSession{}, ErrNotFound
+	}
+	return session, nil
+}
+
+func (m *Memory) TouchGuestSession(_ context.Context, token string, lastSeen, expiresAt time.Time) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	session, ok := m.sessions[token]
+	if !ok {
+		return ErrNotFound
+	}
+	session.LastSeenAt = lastSeen
+	session.ExpiresAt = expiresAt
+	m.sessions[token] = session
+	return nil
+}
+
+func (m *Memory) CountSimulationsForToken(_ context.Context, token string) (int, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	count := 0
+	for _, sim := range m.simulations {
+		if sim.GuestToken == token {
+			count++
+		}
+	}
+	return count, nil
+}
+
+func (m *Memory) PurgeExpired(_ context.Context, now time.Time) (PurgeResult, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	var result PurgeResult
+	for id, sim := range m.simulations {
+		if sim.Showcase || sim.ExpiresAt == nil || now.Before(*sim.ExpiresAt) {
+			continue
+		}
+		delete(m.simulations, id)
+		delete(m.events, id)
+		delete(m.seen, id)
+		delete(m.snapshots, id)
+		result.Simulations++
+	}
+	for token, session := range m.sessions {
+		if !session.Expired(now) {
+			continue
+		}
+		delete(m.sessions, token)
+		result.Sessions++
+		// the run outlives the session that made it, exactly as the foreign
+		// key's on delete set null does in postgres.
+		for id, sim := range m.simulations {
+			if sim.GuestToken == token {
+				sim.GuestToken = ""
+				m.simulations[id] = sim
+			}
+		}
+	}
+	return result, nil
 }
 
 func (m *Memory) CreateSimulation(_ context.Context, sim Simulation) error {

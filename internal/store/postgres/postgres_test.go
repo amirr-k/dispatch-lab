@@ -5,6 +5,7 @@ import (
 	"os"
 	"testing"
 
+	"dispatchlab/db"
 	"dispatchlab/internal/store"
 	"dispatchlab/internal/store/postgres"
 	"dispatchlab/internal/store/storetest"
@@ -57,12 +58,17 @@ func TestMigrateIsIdempotent(t *testing.T) {
 		}
 	}
 
+	migrations, err := db.Migrations()
+	if err != nil {
+		t.Fatalf("Migrations: %v", err)
+	}
+
 	var count int
 	if err := s.Pool().QueryRow(ctx, `select count(*) from schema_migrations`).Scan(&count); err != nil {
 		t.Fatalf("count schema_migrations: %v", err)
 	}
-	if count != 1 {
-		t.Errorf("schema_migrations has %d rows after three migrate runs, want 1", count)
+	if count != len(migrations) {
+		t.Errorf("schema_migrations has %d rows after three migrate runs, want %d", count, len(migrations))
 	}
 }
 
@@ -72,8 +78,15 @@ func TestRollbackAndReapply(t *testing.T) {
 	ctx := context.Background()
 	s := open(t)
 
-	if err := s.Rollback(ctx); err != nil {
-		t.Fatalf("Rollback: %v", err)
+	migrations, err := db.Migrations()
+	if err != nil {
+		t.Fatalf("Migrations: %v", err)
+	}
+	// Rollback reverses one migration at a time, newest first.
+	for range migrations {
+		if err := s.Rollback(ctx); err != nil {
+			t.Fatalf("Rollback: %v", err)
+		}
 	}
 
 	var exists bool

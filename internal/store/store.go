@@ -17,6 +17,19 @@ import (
 // ErrNotFound is returned when a requested row does not exist.
 var ErrNotFound = errors.New("not found")
 
+// GuestSession is an anonymous visitor's identity. It is the only identity
+// the public demo has: it scopes which runs a visitor can reach and bounds
+// how many they can create.
+type GuestSession struct {
+	Token      string    `json:"token"`
+	CreatedAt  time.Time `json:"createdAt"`
+	LastSeenAt time.Time `json:"lastSeenAt"`
+	ExpiresAt  time.Time `json:"expiresAt"`
+}
+
+// Expired reports whether the session is past its expiry as of now.
+func (g GuestSession) Expired(now time.Time) bool { return !now.Before(g.ExpiresAt) }
+
 // Simulation is the metadata row for one simulation run.
 type Simulation struct {
 	ID          string     `json:"id"`
@@ -28,6 +41,12 @@ type Simulation struct {
 	// Showcase marks a run as permanently retained so its /replay/:id URL
 	// stays valid. Anonymous guest runs are not retained.
 	Showcase bool `json:"showcase"`
+	// GuestToken is the session that created this run. Empty for the seeded
+	// showcase runs the server provisions itself, which belong to nobody.
+	GuestToken string `json:"-"`
+	// ExpiresAt is when an anonymous run becomes eligible for pruning. Nil
+	// for showcase runs, which are never pruned.
+	ExpiresAt *time.Time `json:"expiresAt,omitempty"`
 }
 
 // Event is one persisted simulation event. The payload is kept as raw JSON:
@@ -63,11 +82,29 @@ type Comparison struct {
 	CreatedAt time.Time       `json:"createdAt"`
 }
 
+// PurgeResult reports what a retention sweep removed.
+type PurgeResult struct {
+	Simulations int
+	Sessions    int
+}
+
 // Store is the persistence contract. Every method must be safe for
 // concurrent use.
 type Store interface {
+	CreateGuestSession(ctx context.Context, session GuestSession) error
+	GetGuestSession(ctx context.Context, token string) (GuestSession, error)
+	// TouchGuestSession extends a session's life on use, so an active
+	// visitor's runs are not pruned out from under them.
+	TouchGuestSession(ctx context.Context, token string, lastSeen, expiresAt time.Time) error
+
 	CreateSimulation(ctx context.Context, sim Simulation) error
 	GetSimulation(ctx context.Context, id string) (Simulation, error)
+	// CountSimulationsForToken is what a per-session quota is checked
+	// against, including runs this process no longer holds in memory.
+	CountSimulationsForToken(ctx context.Context, token string) (int, error)
+	// PurgeExpired deletes anonymous runs past their expiry and sessions past
+	// theirs. Showcase runs are never touched.
+	PurgeExpired(ctx context.Context, now time.Time) (PurgeResult, error)
 	// MarkShowcase retains a run permanently and stamps its completion time,
 	// which is what gives it a stable replay URL.
 	MarkShowcase(ctx context.Context, id string, completedAt time.Time) error

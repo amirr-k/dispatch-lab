@@ -35,6 +35,11 @@ func Run(t *testing.T, newStore Factory) {
 		"ComparisonRoundTrip":         testComparisonRoundTrip,
 		"ConcurrentAppendsAreVisible": testConcurrentAppendsAreVisible,
 		"PingReportsReachable":        testPingReportsReachable,
+		"GuestSessionRoundTrip":       testGuestSessionRoundTrip,
+		"TouchExtendsASession":        testTouchExtendsASession,
+		"SimulationOwnership":         testSimulationOwnership,
+		"PurgeRemovesExpiredRuns":     testPurgeRemovesExpiredRuns,
+		"PurgeSparesShowcaseRuns":     testPurgeSparesShowcaseRuns,
 	}
 
 	for name, fn := range tests {
@@ -374,6 +379,200 @@ func testComparisonRoundTrip(t *testing.T, s store.Store) {
 	}
 	if _, ok := result["baseline"]; !ok {
 		t.Errorf("result payload not preserved: %v", result)
+	}
+}
+
+func seedSession(t *testing.T, s store.Store, token string, expiresAt time.Time) store.GuestSession {
+	t.Helper()
+	session := store.GuestSession{
+		Token:      token,
+		CreatedAt:  time.Now().UTC().Truncate(time.Millisecond),
+		LastSeenAt: time.Now().UTC().Truncate(time.Millisecond),
+		ExpiresAt:  expiresAt.Truncate(time.Millisecond),
+	}
+	if err := s.CreateGuestSession(context.Background(), session); err != nil {
+		t.Fatalf("CreateGuestSession: %v", err)
+	}
+	return session
+}
+
+// ownedSimulation creates a run belonging to a session, expiring at the given
+// time. A nil expiry means the run is never pruned.
+func ownedSimulation(t *testing.T, s store.Store, id, token string, expiresAt *time.Time) {
+	t.Helper()
+	sim := store.Simulation{
+		ID:         id,
+		Seed:       7,
+		Drivers:    4,
+		Strategy:   "baseline",
+		CreatedAt:  time.Now().UTC(),
+		GuestToken: token,
+		ExpiresAt:  expiresAt,
+	}
+	if err := s.CreateSimulation(context.Background(), sim); err != nil {
+		t.Fatalf("CreateSimulation: %v", err)
+	}
+}
+
+func testGuestSessionRoundTrip(t *testing.T, s store.Store) {
+	ctx := context.Background()
+	want := seedSession(t, s, "token-round-trip", time.Now().UTC().Add(time.Hour))
+
+	got, err := s.GetGuestSession(ctx, want.Token)
+	if err != nil {
+		t.Fatalf("GetGuestSession: %v", err)
+	}
+	if got.Token != want.Token {
+		t.Fatalf("token = %q, want %q", got.Token, want.Token)
+	}
+	if !got.ExpiresAt.Equal(want.ExpiresAt) {
+		t.Errorf("expiresAt = %v, want %v", got.ExpiresAt, want.ExpiresAt)
+	}
+	if got.Expired(time.Now()) {
+		t.Error("a session an hour from expiry reports itself expired")
+	}
+	if !got.Expired(want.ExpiresAt.Add(time.Second)) {
+		t.Error("a session past its expiry does not report itself expired")
+	}
+
+	if _, err := s.GetGuestSession(ctx, "nope"); !errors.Is(err, store.ErrNotFound) {
+		t.Errorf("GetGuestSession error = %v, want ErrNotFound", err)
+	}
+}
+
+func testTouchExtendsASession(t *testing.T, s store.Store) {
+	ctx := context.Background()
+	session := seedSession(t, s, "token-touch", time.Now().UTC().Add(time.Minute))
+
+	extended := session.ExpiresAt.Add(time.Hour)
+	seen := time.Now().UTC().Add(time.Second).Truncate(time.Millisecond)
+	if err := s.TouchGuestSession(ctx, session.Token, seen, extended); err != nil {
+		t.Fatalf("TouchGuestSession: %v", err)
+	}
+
+	got, err := s.GetGuestSession(ctx, session.Token)
+	if err != nil {
+		t.Fatalf("GetGuestSession: %v", err)
+	}
+	if !got.ExpiresAt.Equal(extended) {
+		t.Errorf("expiresAt = %v, want %v", got.ExpiresAt, extended)
+	}
+	if !got.LastSeenAt.Equal(seen) {
+		t.Errorf("lastSeenAt = %v, want %v", got.LastSeenAt, seen)
+	}
+
+	if err := s.TouchGuestSession(ctx, "nope", seen, extended); !errors.Is(err, store.ErrNotFound) {
+		t.Errorf("TouchGuestSession on an unknown token = %v, want ErrNotFound", err)
+	}
+}
+
+func testSimulationOwnership(t *testing.T, s store.Store) {
+	ctx := context.Background()
+	mine := seedSession(t, s, "token-mine", time.Now().UTC().Add(time.Hour))
+	theirs := seedSession(t, s, "token-theirs", time.Now().UTC().Add(time.Hour))
+
+	ownedSimulation(t, s, "sim-mine-1", mine.Token, nil)
+	ownedSimulation(t, s, "sim-mine-2", mine.Token, nil)
+	ownedSimulation(t, s, "sim-theirs-1", theirs.Token, nil)
+
+	got, err := s.GetSimulation(ctx, "sim-mine-1")
+	if err != nil {
+		t.Fatalf("GetSimulation: %v", err)
+	}
+	if got.GuestToken != mine.Token {
+		t.Errorf("owner = %q, want %q", got.GuestToken, mine.Token)
+	}
+
+	count, err := s.CountSimulationsForToken(ctx, mine.Token)
+	if err != nil {
+		t.Fatalf("CountSimulationsForToken: %v", err)
+	}
+	if count != 2 {
+		t.Errorf("count for the owning session = %d, want 2", count)
+	}
+
+	count, err = s.CountSimulationsForToken(ctx, "token-with-nothing")
+	if err != nil {
+		t.Fatalf("CountSimulationsForToken: %v", err)
+	}
+	if count != 0 {
+		t.Errorf("count for a session that created nothing = %d, want 0", count)
+	}
+}
+
+func testPurgeRemovesExpiredRuns(t *testing.T, s store.Store) {
+	ctx := context.Background()
+	now := time.Now().UTC()
+
+	live := seedSession(t, s, "token-live", now.Add(time.Hour))
+	dead := seedSession(t, s, "token-dead", now.Add(-time.Hour))
+
+	past := now.Add(-time.Minute)
+	future := now.Add(time.Hour)
+	ownedSimulation(t, s, "sim-expired", dead.Token, &past)
+	ownedSimulation(t, s, "sim-still-good", live.Token, &future)
+
+	if err := s.AppendEvents(ctx, []store.Event{event("sim-expired", 1, domain.EventOrderPlaced)}); err != nil {
+		t.Fatalf("AppendEvents: %v", err)
+	}
+
+	result, err := s.PurgeExpired(ctx, now)
+	if err != nil {
+		t.Fatalf("PurgeExpired: %v", err)
+	}
+	if result.Simulations != 1 {
+		t.Errorf("purged %d simulations, want 1", result.Simulations)
+	}
+	if result.Sessions != 1 {
+		t.Errorf("purged %d sessions, want 1", result.Sessions)
+	}
+
+	if _, err := s.GetSimulation(ctx, "sim-expired"); !errors.Is(err, store.ErrNotFound) {
+		t.Errorf("expired run survived the purge: %v", err)
+	}
+	if _, err := s.GetSimulation(ctx, "sim-still-good"); err != nil {
+		t.Errorf("unexpired run was purged: %v", err)
+	}
+	if _, err := s.GetGuestSession(ctx, dead.Token); !errors.Is(err, store.ErrNotFound) {
+		t.Errorf("expired session survived the purge: %v", err)
+	}
+	if _, err := s.GetGuestSession(ctx, live.Token); err != nil {
+		t.Errorf("live session was purged: %v", err)
+	}
+
+	// the run's events go with it rather than being orphaned.
+	events, err := s.Events(ctx, "sim-expired", 0, 10)
+	if err != nil {
+		t.Fatalf("Events: %v", err)
+	}
+	if len(events) != 0 {
+		t.Errorf("purged run left %d orphaned events", len(events))
+	}
+}
+
+// a showcase run outlives the session that created it: that is what makes its
+// replay URL stable.
+func testPurgeSparesShowcaseRuns(t *testing.T, s store.Store) {
+	ctx := context.Background()
+	now := time.Now().UTC()
+
+	session := seedSession(t, s, "token-showcase", now.Add(-time.Hour))
+	past := now.Add(-time.Minute)
+	ownedSimulation(t, s, "sim-showcase", session.Token, &past)
+	if err := s.MarkShowcase(ctx, "sim-showcase", now); err != nil {
+		t.Fatalf("MarkShowcase: %v", err)
+	}
+
+	if _, err := s.PurgeExpired(ctx, now); err != nil {
+		t.Fatalf("PurgeExpired: %v", err)
+	}
+
+	got, err := s.GetSimulation(ctx, "sim-showcase")
+	if err != nil {
+		t.Fatalf("showcase run was purged: %v", err)
+	}
+	if got.GuestToken != "" {
+		t.Errorf("owner should be cleared once the session is gone, got %q", got.GuestToken)
 	}
 }
 
