@@ -19,11 +19,12 @@ const (
 )
 
 // Event is an immutable fact emitted by a simulation, ordered by Sequence.
+// JSON tags match the wire envelope in docs/api-schema.yaml.
 type Event struct {
-	SchemaVersion int
-	SimulationID  string
-	Sequence      int
-	VirtualTime   float64
-	Type          EventType
-	Payload       any
+	SchemaVersion int       `json:"schemaVersion"`
+	SimulationID  string    `json:"simulationId"`
+	Sequence      int       `json:"sequence"`
+	VirtualTime   float64   `json:"virtualTime"`
+	Type          EventType `json:"type"`
+	Payload       any       `json:"payload"`
 }
