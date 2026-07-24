@@ -45,6 +45,10 @@ type Simulation struct {
 	commands chan PlaceOrder
 	events   chan domain.Event
 
+	// pending collects events emitted during a single step before they are
+	// either returned (headless stepping) or published to the channel (Run).
+	pending []domain.Event
+
 	nextOrderID int
 }
 
@@ -97,13 +101,16 @@ func (s *Simulation) Submit(cmd PlaceOrder) {
 }
 
 // Run is the actor loop: the only goroutine that ever mutates simulation
-// state. It exits when ctx is canceled.
+// state. It exits when ctx is canceled. Use either Run (live) or the
+// headless Start/Apply/Advance stepping methods on a given simulation, never
+// both — they share the same underlying state.
 func (s *Simulation) Run(ctx context.Context) {
 	ticker := time.NewTicker(tickInterval)
 	defer ticker.Stop()
 	defer close(s.events)
 
 	s.emit(domain.EventSimulationSnapshot, s.snapshotPayload())
+	s.publish()
 
 	for {
 		select {
@@ -111,32 +118,89 @@ func (s *Simulation) Run(ctx context.Context) {
 			return
 		case cmd := <-s.commands:
 			s.handlePlaceOrder(cmd)
+			s.publish()
 		case <-ticker.C:
 			s.tick()
+			s.publish()
 		}
 	}
+}
+
+// Start emits the initial snapshot and returns it. Headless counterpart to
+// the snapshot Run sends when it begins.
+func (s *Simulation) Start() []domain.Event {
+	s.emit(domain.EventSimulationSnapshot, s.snapshotPayload())
+	return s.takePending()
+}
+
+// Apply runs one command and returns the events it produced, with no
+// dependence on wall-clock time. Used by comparison and replay runners and
+// by determinism tests.
+func (s *Simulation) Apply(cmd PlaceOrder) []domain.Event {
+	s.handlePlaceOrder(cmd)
+	return s.takePending()
+}
+
+// Advance steps virtual time forward by one deterministic tick and returns
+// the events it produced.
+func (s *Simulation) Advance() []domain.Event {
+	s.tick()
+	return s.takePending()
+}
+
+// publish moves events emitted during the current step onto the outbound
+// channel, applying the channel's bounded backpressure.
+func (s *Simulation) publish() {
+	for _, e := range s.takePending() {
+		s.events <- e
+	}
+}
+
+// takePending returns the events accumulated since the last call and clears
+// the buffer.
+func (s *Simulation) takePending() []domain.Event {
+	out := s.pending
+	s.pending = nil
+	return out
 }
 
 // snapshotPayload describes the city graph and initial driver state a
 // newly connected client needs before it can render anything. Only called
 // from the actor goroutine, so it never races with command handling.
+// Nodes, edges, and drivers are sorted by ID so the snapshot is byte-for-byte
+// reproducible for a given seed rather than following random map order.
 func (s *Simulation) snapshotPayload() map[string]any {
-	nodes := make([]map[string]any, 0, len(s.City.Nodes))
-	for _, n := range s.City.Nodes {
+	nodeIDs := make([]domain.NodeID, 0, len(s.City.Nodes))
+	for id := range s.City.Nodes {
+		nodeIDs = append(nodeIDs, id)
+	}
+	sort.Slice(nodeIDs, func(i, j int) bool { return nodeIDs[i] < nodeIDs[j] })
+	nodes := make([]map[string]any, 0, len(nodeIDs))
+	for _, id := range nodeIDs {
+		n := s.City.Nodes[id]
 		nodes = append(nodes, map[string]any{"id": n.ID, "x": n.X, "y": n.Y})
 	}
 
-	edges := make([]map[string]any, 0)
+	allEdges := make([]domain.Edge, 0)
 	for _, list := range s.City.Edges {
-		for _, e := range list {
-			edges = append(edges, map[string]any{
-				"id": e.ID, "from": e.From, "to": e.To, "closed": e.Closed,
-			})
-		}
+		allEdges = append(allEdges, list...)
+	}
+	sort.Slice(allEdges, func(i, j int) bool { return allEdges[i].ID < allEdges[j].ID })
+	edges := make([]map[string]any, 0, len(allEdges))
+	for _, e := range allEdges {
+		edges = append(edges, map[string]any{
+			"id": e.ID, "from": e.From, "to": e.To, "closed": e.Closed,
+		})
 	}
 
-	drivers := make([]map[string]any, 0, len(s.drivers))
-	for _, d := range s.drivers {
+	driverIDs := make([]domain.DriverID, 0, len(s.drivers))
+	for id := range s.drivers {
+		driverIDs = append(driverIDs, id)
+	}
+	sort.Slice(driverIDs, func(i, j int) bool { return driverIDs[i] < driverIDs[j] })
+	drivers := make([]map[string]any, 0, len(driverIDs))
+	for _, id := range driverIDs {
+		d := s.drivers[id]
 		drivers = append(drivers, map[string]any{
 			"id": d.ID, "position": d.Position, "status": d.Status,
 		})
@@ -147,14 +211,14 @@ func (s *Simulation) snapshotPayload() map[string]any {
 
 func (s *Simulation) emit(t domain.EventType, payload any) {
 	s.sequence++
-	s.events <- domain.Event{
+	s.pending = append(s.pending, domain.Event{
 		SchemaVersion: 1,
 		SimulationID:  s.ID,
 		Sequence:      s.sequence,
 		VirtualTime:   s.virtualTime,
 		Type:          t,
 		Payload:       payload,
-	}
+	})
 }
 
 func (s *Simulation) handlePlaceOrder(cmd PlaceOrder) {
