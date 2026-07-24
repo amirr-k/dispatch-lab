@@ -48,6 +48,13 @@ export function placeOrder(id: string, pickup: string, destination: string): Pro
   });
 }
 
+export function closeRoad(id: string, edgeId: string): Promise<void> {
+  return request(`/api/v1/simulations/${id}/closures`, {
+    method: "POST",
+    body: JSON.stringify({ edgeId }),
+  });
+}
+
 export function pauseSimulation(id: string): Promise<void> {
   return request(`/api/v1/simulations/${id}/pause`, { method: "POST" });
 }
