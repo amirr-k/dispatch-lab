@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strconv"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -19,6 +20,21 @@ type Store struct {
 	pool *pgxpool.Pool
 }
 
+const (
+	// statementTimeout is enforced by the database itself, so a query that
+	// somehow escapes its context deadline still cannot hold a connection
+	// open indefinitely.
+	statementTimeout = 10 * time.Second
+	// maxConns bounds the pool. The event log is written in batches by a
+	// handful of goroutines, so a small pool is plenty and keeps a burst of
+	// traffic from opening more connections than the database will accept.
+	maxConns = 10
+	// maxConnLifetime recycles connections so a long-lived process does not
+	// hold one across a database restart or failover.
+	maxConnLifetime = time.Hour
+	maxConnIdleTime = 5 * time.Minute
+)
+
 // Open connects to the given database URL, verifies the connection, and
 // brings the schema up to date. It is safe to call against an empty database.
 func Open(ctx context.Context, databaseURL string) (*Store, error) {
@@ -26,6 +42,14 @@ func Open(ctx context.Context, databaseURL string) (*Store, error) {
 	if err != nil {
 		return nil, fmt.Errorf("parse database url: %w", err)
 	}
+
+	cfg.MaxConns = maxConns
+	cfg.MaxConnLifetime = maxConnLifetime
+	cfg.MaxConnIdleTime = maxConnIdleTime
+	if cfg.ConnConfig.RuntimeParams == nil {
+		cfg.ConnConfig.RuntimeParams = map[string]string{}
+	}
+	cfg.ConnConfig.RuntimeParams["statement_timeout"] = strconv.Itoa(int(statementTimeout.Milliseconds()))
 
 	pool, err := pgxpool.NewWithConfig(ctx, cfg)
 	if err != nil {
