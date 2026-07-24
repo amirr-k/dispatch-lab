@@ -2,33 +2,77 @@
 package http
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"math/rand"
 	"net/http"
+	"strconv"
+	"time"
 
 	"dispatchlab/internal/domain"
+	"dispatchlab/internal/replay"
 	"dispatchlab/internal/service"
+	"dispatchlab/internal/store"
+	"dispatchlab/internal/telemetry"
 	"dispatchlab/internal/transport/ws"
 )
 
 const (
 	defaultDrivers = 12
 	maxDrivers     = 40
+	// readyTimeout bounds how long a readiness probe waits on the store
+	// before reporting the process unready.
+	readyTimeout = 2 * time.Second
 )
 
 // Server adapts the service Manager and comparison store to HTTP.
 type Server struct {
 	mgr     *service.Manager
 	compare *service.Comparisons
+	replay  *replay.Reader
+	store   store.Store
+	metrics *telemetry.Metrics
+	logger  *slog.Logger
 }
 
+// NewServer returns a server with no persistence or telemetry attached.
 func NewServer(mgr *service.Manager, compare *service.Comparisons) *Server {
-	return &Server{mgr: mgr, compare: compare}
+	return NewServerWithConfig(ServerConfig{Manager: mgr, Comparisons: compare})
+}
+
+// ServerConfig wires the server to the rest of the backend. Store, Metrics,
+// and Logger are optional; without a store the replay routes report that a
+// run has no persisted history.
+type ServerConfig struct {
+	Manager     *service.Manager
+	Comparisons *service.Comparisons
+	Store       store.Store
+	Metrics     *telemetry.Metrics
+	Logger      *slog.Logger
+}
+
+// NewServerWithConfig returns a fully wired server.
+func NewServerWithConfig(cfg ServerConfig) *Server {
+	if cfg.Logger == nil {
+		cfg.Logger = slog.Default()
+	}
+	s := &Server{
+		mgr:     cfg.Manager,
+		compare: cfg.Comparisons,
+		store:   cfg.Store,
+		metrics: cfg.Metrics,
+		logger:  cfg.Logger,
+	}
+	if cfg.Store != nil {
+		s.replay = replay.NewReader(cfg.Store)
+	}
+	return s
 }
 
 // Routes builds the full HTTP handler, including the WebSocket stream and
-// health checks, wrapped in permissive dev CORS.
+// health checks, wrapped in request tracing and permissive dev CORS.
 func (s *Server) Routes() http.Handler {
 	mux := http.NewServeMux()
 
@@ -40,15 +84,19 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("POST /api/v1/simulations/{id}/resume", s.resume)
 	mux.HandleFunc("POST /api/v1/simulations/{id}/reset", s.reset)
 	mux.HandleFunc("POST /api/v1/simulations/{id}/speed", s.setSpeed)
-	mux.HandleFunc("GET /api/v1/simulations/{id}/stream", ws.Handler(s.mgr.StreamLookup))
+	mux.HandleFunc("POST /api/v1/simulations/{id}/showcase", s.markShowcase)
+	mux.HandleFunc("GET /api/v1/simulations/{id}/replay", s.getReplay)
+	mux.HandleFunc("GET /api/v1/simulations/{id}/stream",
+		ws.HandlerWithTelemetry(s.mgr.StreamLookup, s.metrics, s.logger))
 
 	mux.HandleFunc("POST /api/v1/comparisons", s.createComparison)
 	mux.HandleFunc("GET /api/v1/comparisons/{id}", s.getComparison)
 
 	mux.HandleFunc("GET /health/live", health)
-	mux.HandleFunc("GET /health/ready", health)
+	mux.HandleFunc("GET /health/ready", s.ready)
+	mux.HandleFunc("GET /metrics", s.serveMetrics)
 
-	return withCORS(mux)
+	return withCORS(withTelemetry(mux, s.logger))
 }
 
 type createRequest struct {
@@ -118,12 +166,12 @@ func (s *Server) createComparison(w http.ResponseWriter, r *http.Request) {
 		drivers = clamp(*req.Drivers, 1, maxDrivers)
 	}
 
-	result := s.compare.Create(seed, drivers)
+	result := s.compare.Create(r.Context(), seed, drivers)
 	writeJSON(w, http.StatusCreated, result)
 }
 
 func (s *Server) getComparison(w http.ResponseWriter, r *http.Request) {
-	result, ok := s.compare.Get(r.PathValue("id"))
+	result, ok := s.compare.Get(r.Context(), r.PathValue("id"))
 	if !ok {
 		writeError(w, http.StatusNotFound, "not_found", "comparison not found")
 		return
@@ -145,7 +193,7 @@ func (s *Server) placeOrder(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid_request", "pickup and destination are required")
 		return
 	}
-	if err := s.mgr.PlaceOrder(r.PathValue("id"), req.Pickup, req.Destination); err != nil {
+	if err := s.mgr.PlaceOrder(r.Context(), r.PathValue("id"), req.Pickup, req.Destination); err != nil {
 		writeServiceError(w, err)
 		return
 	}
@@ -165,7 +213,7 @@ func (s *Server) closeRoad(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid_request", "edgeId is required")
 		return
 	}
-	if err := s.mgr.CloseRoad(r.PathValue("id"), req.EdgeID); err != nil {
+	if err := s.mgr.CloseRoad(r.Context(), r.PathValue("id"), req.EdgeID); err != nil {
 		writeServiceError(w, err)
 		return
 	}
@@ -176,7 +224,7 @@ func (s *Server) pause(w http.ResponseWriter, r *http.Request)  { s.setPaused(w,
 func (s *Server) resume(w http.ResponseWriter, r *http.Request) { s.setPaused(w, r, false) }
 
 func (s *Server) setPaused(w http.ResponseWriter, r *http.Request, paused bool) {
-	if err := s.mgr.SetPaused(r.PathValue("id"), paused); err != nil {
+	if err := s.mgr.SetPaused(r.Context(), r.PathValue("id"), paused); err != nil {
 		writeServiceError(w, err)
 		return
 	}
@@ -184,7 +232,7 @@ func (s *Server) setPaused(w http.ResponseWriter, r *http.Request, paused bool) 
 }
 
 func (s *Server) reset(w http.ResponseWriter, r *http.Request) {
-	if err := s.mgr.Reset(r.PathValue("id")); err != nil {
+	if err := s.mgr.Reset(r.Context(), r.PathValue("id")); err != nil {
 		writeServiceError(w, err)
 		return
 	}
@@ -204,14 +252,123 @@ func (s *Server) setSpeed(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid_request", "multiplier must be positive")
 		return
 	}
-	if err := s.mgr.SetSpeed(r.PathValue("id"), req.Multiplier); err != nil {
+	if err := s.mgr.SetSpeed(r.Context(), r.PathValue("id"), req.Multiplier); err != nil {
 		writeServiceError(w, err)
 		return
 	}
 	w.WriteHeader(http.StatusAccepted)
 }
 
+// markShowcase retains a finished run permanently and hands back the stable
+// URL its replay lives at.
+func (s *Server) markShowcase(w http.ResponseWriter, r *http.Request) {
+	if s.store == nil {
+		writeError(w, http.StatusServiceUnavailable, "no_persistence",
+			"this server has no database attached, so runs cannot be saved")
+		return
+	}
+
+	id := r.PathValue("id")
+	if err := s.mgr.MarkShowcase(r.Context(), id); err != nil {
+		writeServiceError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, showcaseResponse{
+		ID:        id,
+		Showcase:  true,
+		ReplayURL: "/replay/" + id,
+	})
+}
+
+type showcaseResponse struct {
+	ID        string `json:"id"`
+	Showcase  bool   `json:"showcase"`
+	ReplayURL string `json:"replayUrl"`
+}
+
+// getReplay serves a run's persisted history. With no query parameters it
+// returns the event log itself, which is what the scrubber plays through.
+// With ?at=<sequence> it instead returns the state reconstructed at that
+// point, for a client that wants one frame rather than the whole run.
+func (s *Server) getReplay(w http.ResponseWriter, r *http.Request) {
+	if s.replay == nil {
+		writeError(w, http.StatusServiceUnavailable, "no_persistence",
+			"this server has no database attached, so no history was recorded")
+		return
+	}
+
+	id := r.PathValue("id")
+	query := r.URL.Query()
+
+	if raw := query.Get("at"); raw != "" {
+		sequence, err := strconv.Atoi(raw)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "invalid_request", "at must be a sequence number")
+			return
+		}
+		state, err := s.replay.StateAt(r.Context(), id, sequence)
+		if err != nil {
+			writeReplayError(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, state)
+		return
+	}
+
+	from, err := intParam(query.Get("fromSequence"), 0)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_request", "fromSequence must be a number")
+		return
+	}
+	limit, err := intParam(query.Get("limit"), 0)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid_request", "limit must be a number")
+		return
+	}
+
+	log, err := s.replay.Load(r.Context(), id, from, limit)
+	if err != nil {
+		writeReplayError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, log)
+}
+
+func intParam(raw string, fallback int) (int, error) {
+	if raw == "" {
+		return fallback, nil
+	}
+	return strconv.Atoi(raw)
+}
+
+func (s *Server) serveMetrics(w http.ResponseWriter, _ *http.Request) {
+	w.Header().Set("Content-Type", "text/plain; version=0.0.4; charset=utf-8")
+	if err := s.metrics.WritePrometheus(w); err != nil {
+		s.logger.Error("could not write metrics", "error", err)
+	}
+}
+
 func health(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) }
+
+// ready reports whether the process can actually serve: with a database
+// attached, that means the database answers, not merely that the process is
+// alive.
+func (s *Server) ready(w http.ResponseWriter, r *http.Request) {
+	if s.store == nil {
+		w.WriteHeader(http.StatusOK)
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), readyTimeout)
+	defer cancel()
+
+	if err := s.store.Ping(ctx); err != nil {
+		s.logger.Warn("readiness probe failed", "error", err)
+		writeError(w, http.StatusServiceUnavailable, "not_ready", "store is unreachable")
+		return
+	}
+	w.WriteHeader(http.StatusOK)
+}
 
 // decode reads a JSON body, tolerating an empty body as an empty object. It
 // writes a 400 and returns false if the body is present but malformed.
@@ -245,6 +402,14 @@ func writeError(w http.ResponseWriter, status int, code, message string) {
 	body.Error.Code = code
 	body.Error.Message = message
 	writeJSON(w, status, body)
+}
+
+func writeReplayError(w http.ResponseWriter, err error) {
+	if errors.Is(err, replay.ErrNotFound) {
+		writeError(w, http.StatusNotFound, "not_found", "no replay exists for that simulation")
+		return
+	}
+	writeError(w, http.StatusInternalServerError, "internal", "could not read the replay")
 }
 
 func writeServiceError(w http.ResponseWriter, err error) {
