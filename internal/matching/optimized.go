@@ -130,12 +130,15 @@ func Optimized(
 		})
 	}
 
-	// a row that never received a real (sub-Unreachable) assignment and
-	// whose entire cost row is Unreachable had no feasible candidate
-	// anywhere - genuinely infeasible, not merely out-competed this round
+	// A row only counts as genuinely infeasible if it actually had
+	// candidates to try and none of them could route there (e.g. an
+	// isolated pickup). An order with zero candidates simply means no idle
+	// driver exists to consider it *right now* - a transient condition
+	// that resolves once one frees up, not a permanent one - so it's left
+	// out of both lists and stays pending for the next batch window.
 	var infeasible []domain.OrderID
 	for i, o := range sorted {
-		if !assignedRows[i] && rowIsInfeasible(cost[i]) {
+		if !assignedRows[i] && len(perOrderCandidates[i]) > 0 && rowIsInfeasible(cost[i]) {
 			infeasible = append(infeasible, o.ID)
 		}
 	}
