@@ -109,3 +109,39 @@ export function createComparison(seed?: number, drivers?: number): Promise<Compa
 export function getComparison(id: string): Promise<ComparisonResult> {
   return request(`/api/v1/comparisons/${id}`);
 }
+
+export interface ShowcaseResponse {
+  id: string;
+  showcase: boolean;
+  replayUrl: string;
+}
+
+// markShowcase retains a run permanently and returns the stable URL its
+// replay lives at.
+export function markShowcase(id: string): Promise<ShowcaseResponse> {
+  return request(`/api/v1/simulations/${id}/showcase`, { method: "POST" });
+}
+
+export interface StoredSimulation {
+  id: string;
+  seed: number;
+  drivers: number;
+  strategy: string;
+  createdAt: string;
+  completedAt?: string;
+  showcase: boolean;
+}
+
+export interface ReplayLog {
+  simulation: StoredSimulation;
+  events: EventEnvelope[];
+  fromSequence: number;
+  latestSequence: number;
+  hasMore: boolean;
+}
+
+export function getReplay(id: string, fromSequence = 0, limit?: number): Promise<ReplayLog> {
+  const params = new URLSearchParams({ fromSequence: String(fromSequence) });
+  if (limit) params.set("limit", String(limit));
+  return request(`/api/v1/simulations/${id}/replay?${params}`);
+}
