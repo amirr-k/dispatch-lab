@@ -23,28 +23,22 @@ func NewHub(source <-chan domain.Event) *Hub {
 
 func (h *Hub) run(source <-chan domain.Event) {
 	subscribers := map[chan domain.Event]bool{}
-	var snapshot *domain.Event
 
 	for {
 		select {
 		case sub := <-h.subscribe:
-			if snapshot != nil {
-				sub <- *snapshot
-			}
 			subscribers[sub] = true
 		case sub := <-h.unsubscribe:
-			delete(subscribers, sub)
-			close(sub)
+			if subscribers[sub] {
+				delete(subscribers, sub)
+				close(sub)
+			}
 		case event, ok := <-source:
 			if !ok {
 				for sub := range subscribers {
 					close(sub)
 				}
 				return
-			}
-			if event.Type == domain.EventSimulationSnapshot {
-				e := event
-				snapshot = &e
 			}
 			for sub := range subscribers {
 				select {
