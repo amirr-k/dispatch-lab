@@ -1,15 +1,22 @@
 package service
 
 import (
+	"context"
+	"encoding/json"
+	"errors"
+	"log/slog"
 	"math"
 	"math/rand"
 	"sort"
 	"sync"
+	"time"
 
 	"dispatchlab/internal/city"
 	"dispatchlab/internal/domain"
 	"dispatchlab/internal/matching"
 	"dispatchlab/internal/simulation"
+	"dispatchlab/internal/store"
+	"dispatchlab/internal/telemetry"
 )
 
 // Arrival is one deterministic order placement within a comparison scenario.
@@ -228,21 +235,40 @@ func percentile(sorted []float64, p float64) float64 {
 	return sorted[rank]
 }
 
-// Comparisons stores comparison results in memory, keyed by id. Durable
-// Postgres persistence is Phase 5; this is an interim in-memory store.
+// Comparisons runs and retains comparison results. Results are held in memory
+// for the life of the process and, when a store is attached, written through
+// to it so a published number stays traceable to the run that produced it.
 type Comparisons struct {
 	mu      sync.Mutex
 	results map[string]ComparisonResult
+
+	store   store.Store
+	metrics *telemetry.Metrics
+	logger  *slog.Logger
 }
 
-// NewComparisons returns an empty in-memory comparison result store.
+// NewComparisons returns a comparison store with no persistence attached.
 func NewComparisons() *Comparisons {
-	return &Comparisons{results: make(map[string]ComparisonResult)}
+	return NewComparisonsWithStore(nil, nil, nil)
+}
+
+// NewComparisonsWithStore returns a comparison store that persists results.
+func NewComparisonsWithStore(s store.Store, metrics *telemetry.Metrics, logger *slog.Logger) *Comparisons {
+	if logger == nil {
+		logger = slog.Default()
+	}
+	return &Comparisons{
+		results: make(map[string]ComparisonResult),
+		store:   s,
+		metrics: metrics,
+		logger:  logger,
+	}
 }
 
 // Create runs a fresh DefaultScenario for the given seed and driver count
 // and stores the result under a generated id.
-func (c *Comparisons) Create(seed int64, drivers int) ComparisonResult {
+func (c *Comparisons) Create(ctx context.Context, seed int64, drivers int) ComparisonResult {
+	start := time.Now()
 	result := RunComparison(DefaultScenario(seed, drivers))
 	result.ID = generateID()
 
@@ -250,13 +276,62 @@ func (c *Comparisons) Create(seed int64, drivers int) ComparisonResult {
 	c.results[result.ID] = result
 	c.mu.Unlock()
 
+	c.logger.Info("ran an algorithm comparison",
+		"comparison_id", result.ID, "seed", seed, "drivers", drivers,
+		"duration_ms", telemetry.DurationMs(time.Since(start)))
+
+	c.persist(ctx, result)
 	return result
 }
 
-// Get returns a previously created comparison result by id.
-func (c *Comparisons) Get(id string) (ComparisonResult, bool) {
+func (c *Comparisons) persist(ctx context.Context, result ComparisonResult) {
+	if c.store == nil {
+		return
+	}
+
+	payload, err := json.Marshal(result)
+	if err != nil {
+		c.metrics.PersistenceErrors().Inc()
+		c.logger.Error("could not encode a comparison", "comparison_id", result.ID, "error", err)
+		return
+	}
+
+	record := store.Comparison{
+		ID:        result.ID,
+		Seed:      result.Scenario.Seed,
+		Drivers:   result.Scenario.Drivers,
+		Result:    payload,
+		CreatedAt: time.Now().UTC(),
+	}
+	if err := c.store.SaveComparison(ctx, record); err != nil {
+		c.metrics.PersistenceErrors().Inc()
+		c.logger.Error("could not persist a comparison", "comparison_id", result.ID, "error", err)
+	}
+}
+
+// Get returns a previously created comparison result by id, falling back to
+// the store for a result this process did not run itself.
+func (c *Comparisons) Get(ctx context.Context, id string) (ComparisonResult, bool) {
 	c.mu.Lock()
-	defer c.mu.Unlock()
-	r, ok := c.results[id]
-	return r, ok
+	result, ok := c.results[id]
+	c.mu.Unlock()
+	if ok {
+		return result, true
+	}
+
+	if c.store == nil {
+		return ComparisonResult{}, false
+	}
+	record, err := c.store.GetComparison(ctx, id)
+	if err != nil {
+		if !errors.Is(err, store.ErrNotFound) {
+			c.logger.Error("could not read a comparison", "comparison_id", id, "error", err)
+		}
+		return ComparisonResult{}, false
+	}
+	if err := json.Unmarshal(record.Result, &result); err != nil {
+		c.logger.Error("could not decode a stored comparison", "comparison_id", id, "error", err)
+		return ComparisonResult{}, false
+	}
+	return result, true
 }

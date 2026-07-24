@@ -1,6 +1,7 @@
 package service
 
 import (
+	"context"
 	"reflect"
 	"testing"
 )
@@ -104,12 +105,12 @@ func TestPercentile(t *testing.T) {
 
 func TestComparisonsCreateAndGet(t *testing.T) {
 	store := NewComparisons()
-	result := store.Create(42, 10)
+	result := store.Create(context.Background(), 42, 10)
 	if result.ID == "" {
 		t.Fatal("expected a generated id")
 	}
 
-	got, ok := store.Get(result.ID)
+	got, ok := store.Get(context.Background(), result.ID)
 	if !ok {
 		t.Fatal("expected the created comparison to be retrievable")
 	}
@@ -120,7 +121,7 @@ func TestComparisonsCreateAndGet(t *testing.T) {
 
 func TestComparisonsGetMissing(t *testing.T) {
 	store := NewComparisons()
-	if _, ok := store.Get("does-not-exist"); ok {
+	if _, ok := store.Get(context.Background(), "does-not-exist"); ok {
 		t.Fatal("expected missing comparison to report not found")
 	}
 }

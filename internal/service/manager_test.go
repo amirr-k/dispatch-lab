@@ -1,6 +1,7 @@
 package service
 
 import (
+	"context"
 	"errors"
 	"testing"
 	"time"
@@ -56,19 +57,19 @@ func TestGetMissingReturnsFalse(t *testing.T) {
 
 func TestCommandsOnMissingSimulationReturnErrNotFound(t *testing.T) {
 	m := NewManager(0)
-	if err := m.PlaceOrder("missing", "a", "b"); !errors.Is(err, ErrNotFound) {
+	if err := m.PlaceOrder(context.Background(), "missing", "a", "b"); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("PlaceOrder: expected ErrNotFound, got %v", err)
 	}
-	if err := m.SetPaused("missing", true); !errors.Is(err, ErrNotFound) {
+	if err := m.SetPaused(context.Background(), "missing", true); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("SetPaused: expected ErrNotFound, got %v", err)
 	}
-	if err := m.Reset("missing"); !errors.Is(err, ErrNotFound) {
+	if err := m.Reset(context.Background(), "missing"); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("Reset: expected ErrNotFound, got %v", err)
 	}
-	if err := m.SetSpeed("missing", 2); !errors.Is(err, ErrNotFound) {
+	if err := m.SetSpeed(context.Background(), "missing", 2); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("SetSpeed: expected ErrNotFound, got %v", err)
 	}
-	if err := m.CloseRoad("missing", "e-a-b"); !errors.Is(err, ErrNotFound) {
+	if err := m.CloseRoad(context.Background(), "missing", "e-a-b"); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("CloseRoad: expected ErrNotFound, got %v", err)
 	}
 	if _, err := m.Snapshot("missing"); !errors.Is(err, ErrNotFound) {
@@ -84,7 +85,7 @@ func TestSnapshotReflectsPlacedOrder(t *testing.T) {
 	sim, _ := m.Get(id)
 	nodeIDs := sortedNodeIDs(t, sim)
 
-	if err := m.PlaceOrder(id, nodeIDs[0], nodeIDs[len(nodeIDs)-1]); err != nil {
+	if err := m.PlaceOrder(context.Background(), id, nodeIDs[0], nodeIDs[len(nodeIDs)-1]); err != nil {
 		t.Fatalf("PlaceOrder: %v", err)
 	}
 
@@ -112,7 +113,7 @@ func TestCloseRoadReachesSimulation(t *testing.T) {
 	sim, _ := m.Get(id)
 	edgeID := anyEdgeID(t, sim)
 
-	if err := m.CloseRoad(id, edgeID); err != nil {
+	if err := m.CloseRoad(context.Background(), id, edgeID); err != nil {
 		t.Fatalf("CloseRoad: %v", err)
 	}
 
