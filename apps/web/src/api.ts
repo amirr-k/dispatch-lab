@@ -11,11 +11,80 @@ export class ApiError extends Error {
   }
 }
 
-async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(`${API_URL}${path}`, {
-    headers: { "Content-Type": "application/json" },
+const TOKEN_KEY = "dispatchlab.guestToken";
+
+export interface GuestSession {
+  token: string;
+  expiresAt: string;
+  simulationQuota: number;
+}
+
+// the token is kept in sessionStorage so a page refresh rejoins the same
+// session and its simulations, while a new tab starts clean.
+function storedToken(): string | null {
+  return sessionStorage.getItem(TOKEN_KEY);
+}
+
+// pending deduplicates concurrent session requests: several API calls firing
+// at once on first load must not each mint a token.
+let pending: Promise<string> | null = null;
+
+export function guestToken(): string | null {
+  return storedToken();
+}
+
+export async function ensureSession(): Promise<string> {
+  const existing = storedToken();
+  if (existing) return existing;
+  if (pending) return pending;
+
+  pending = (async () => {
+    const res = await fetch(`${API_URL}/api/v1/guest-sessions`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+    });
+    if (!res.ok) {
+      throw new ApiError(res.status, "could not start a guest session");
+    }
+    const session = (await res.json()) as GuestSession;
+    sessionStorage.setItem(TOKEN_KEY, session.token);
+    return session.token;
+  })();
+
+  try {
+    return await pending;
+  } finally {
+    pending = null;
+  }
+}
+
+function clearSession() {
+  sessionStorage.removeItem(TOKEN_KEY);
+}
+
+async function send(path: string, token: string, init?: RequestInit): Promise<Response> {
+  return fetch(`${API_URL}${path}`, {
     ...init,
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${token}`,
+      ...init?.headers,
+    },
   });
+}
+
+async function request<T>(path: string, init?: RequestInit): Promise<T> {
+  let token = await ensureSession();
+  let res = await send(path, token, init);
+
+  // an expired session is the one error worth retrying automatically: the
+  // visitor did nothing wrong and a fresh token makes the request valid.
+  if (res.status === 401) {
+    clearSession();
+    token = await ensureSession();
+    res = await send(path, token, init);
+  }
+
   if (!res.ok) {
     const body = await res.json().catch(() => null);
     throw new ApiError(res.status, body?.error?.message ?? `request failed with status ${res.status}`);
@@ -74,8 +143,12 @@ export function setSpeed(id: string, multiplier: number): Promise<void> {
   });
 }
 
+// the browser WebSocket API cannot set an Authorization header, so the stream
+// takes the token as a query parameter instead.
 export function streamURL(id: string): string {
-  return `${API_URL.replace(/^http/, "ws")}/api/v1/simulations/${id}/stream`;
+  const base = `${API_URL.replace(/^http/, "ws")}/api/v1/simulations/${id}/stream`;
+  const token = storedToken();
+  return token ? `${base}?token=${encodeURIComponent(token)}` : base;
 }
 
 export interface Metrics {
