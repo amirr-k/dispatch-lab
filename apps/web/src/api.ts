@@ -77,3 +77,35 @@ export function setSpeed(id: string, multiplier: number): Promise<void> {
 export function streamURL(id: string): string {
   return `${API_URL.replace(/^http/, "ws")}/api/v1/simulations/${id}/stream`;
 }
+
+export interface Metrics {
+  algorithm: string;
+  completedDeliveries: number;
+  unassignedOrders: number;
+  averagePickupTime: number;
+  p95PickupTime: number;
+  totalDistance: number;
+  assignmentComputeMs: number;
+}
+
+export interface ComparisonResult {
+  id: string;
+  scenario: {
+    seed: number;
+    drivers: number;
+    batchWindow: number;
+  };
+  baseline: Metrics;
+  optimized: Metrics;
+}
+
+export function createComparison(seed?: number, drivers?: number): Promise<ComparisonResult> {
+  const body: Record<string, number> = {};
+  if (seed !== undefined) body.seed = seed;
+  if (drivers !== undefined) body.drivers = drivers;
+  return request("/api/v1/comparisons", { method: "POST", body: JSON.stringify(body) });
+}
+
+export function getComparison(id: string): Promise<ComparisonResult> {
+  return request(`/api/v1/comparisons/${id}`);
+}

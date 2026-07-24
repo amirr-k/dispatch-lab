@@ -44,7 +44,10 @@ function App() {
           {connected ? "● Connected" : "● Disconnected"}
         </span>
 
-        <div style={{ display: "flex", gap: 8, marginLeft: "auto" }}>
+        <div style={{ display: "flex", gap: 16, alignItems: "center", marginLeft: "auto" }}>
+          <a href="/compare" style={{ color: "#9aa4b2" }}>
+            Compare Algorithms
+          </a>
           <button onClick={togglePaused}>{paused ? "Resume" : "Pause"}</button>
           <button onClick={reset}>Reset</button>
           <select value={speed} onChange={(e) => changeSpeed(Number(e.target.value))}>
