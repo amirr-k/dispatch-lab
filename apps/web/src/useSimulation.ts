@@ -31,6 +31,7 @@ export interface SimulationState {
   togglePaused: () => Promise<void>;
   reset: () => Promise<void>;
   changeSpeed: (multiplier: number) => Promise<void>;
+  closeRoad: (edgeId: string) => Promise<void>;
 }
 
 function describe(event: EventEnvelope): string {
@@ -44,10 +45,17 @@ function describe(event: EventEnvelope): string {
       return `Order ${p.orderId} could not be assigned: ${p.reason}`;
     case "order.delivered":
       return `Order ${p.orderId} delivered`;
-    case "road.closed":
-      return `Road ${p.edgeId} closed`;
+    case "road.closed": {
+      const routes = p.affectedRoutes as number;
+      const ms = (p.recalculationMs as number).toFixed(2);
+      return routes > 0
+        ? `Road closed — ${routes} active route(s) recalculated in ${ms}ms`
+        : `Road ${p.from} → ${p.to} closed`;
+    }
     case "road.reopened":
-      return `Road ${p.edgeId} reopened`;
+      return `Road ${p.from} → ${p.to} reopened`;
+    case "route.invalidated":
+      return `Route invalidated for driver ${p.driverId}`;
     case "simulation.paused":
       return p.paused ? "Simulation paused" : "Simulation resumed";
     case "simulation.speed.changed":
@@ -150,6 +158,13 @@ export function useSimulation(): SimulationState {
         case "simulation.speed.changed":
           setSpeedState(p.multiplier as number);
           break;
+        case "road.closed":
+        case "road.reopened": {
+          const ids = new Set(p.edgeIds as string[]);
+          const closed = event.type === "road.closed";
+          setEdges((prev) => prev.map((e) => (ids.has(e.id) ? { ...e, closed } : e)));
+          break;
+        }
       }
 
       setFeed((prev) => [describe(event), ...prev].slice(0, MAX_FEED_LENGTH));
@@ -222,6 +237,15 @@ export function useSimulation(): SimulationState {
     (multiplier: number) => runAction((id) => api.setSpeed(id, multiplier)),
     [runAction],
   );
+  // reopening isn't supported by the backend yet, so closing an already
+  // closed road is skipped client side rather than sent as a no-op request.
+  const closeRoad = useCallback(
+    (edgeId: string) => {
+      if (edges.find((e) => e.id === edgeId)?.closed) return Promise.resolve();
+      return runAction((id) => api.closeRoad(id, edgeId));
+    },
+    [runAction, edges],
+  );
 
   return {
     simulationId,
@@ -239,5 +263,6 @@ export function useSimulation(): SimulationState {
     togglePaused,
     reset,
     changeSpeed,
+    closeRoad,
   };
 }

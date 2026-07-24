@@ -20,6 +20,7 @@ function App() {
     togglePaused,
     reset,
     changeSpeed,
+    closeRoad,
   } = useSimulation();
 
   const [pickup, setPickup] = useState<string | null>(null);
@@ -60,7 +61,14 @@ function App() {
 
       <div style={{ display: "flex", flex: 1, minHeight: 0 }}>
         <main style={{ flex: 1, position: "relative" }}>
-          <CityMap nodes={nodes} edges={edges} drivers={drivers} pickup={pickup} onNodeClick={handleNodeClick} />
+          <CityMap
+            nodes={nodes}
+            edges={edges}
+            drivers={drivers}
+            pickup={pickup}
+            onNodeClick={handleNodeClick}
+            onEdgeClick={closeRoad}
+          />
           {assignment && (
             <div
               style={{
@@ -127,7 +135,7 @@ function MetricsStrip({ metrics, pickup, actionError }: MetricsStripProps) {
       <span>Delivered: {metrics.delivered}</span>
       <span>Unassignable: {metrics.unassignable}</span>
       <span style={{ marginLeft: "auto" }}>
-        {pickup ? `Pickup selected: ${pickup} — click a destination` : "Click a node to place an order"}
+        {pickup ? `Pickup selected: ${pickup} — click a destination` : "Click a node to place an order, or a road to close it"}
       </span>
       {actionError && <span style={{ color: "#e5484d" }}>{actionError}</span>}
     </div>

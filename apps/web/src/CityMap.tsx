@@ -6,6 +6,7 @@ interface CityMapProps {
   drivers: Record<string, Driver>;
   pickup?: string | null;
   onNodeClick?: (nodeId: string) => void;
+  onEdgeClick?: (edgeId: string) => void;
 }
 
 const driverColor: Record<string, string> = {
@@ -16,7 +17,7 @@ const driverColor: Record<string, string> = {
   unavailable: "#374151",
 };
 
-export function CityMap({ nodes, edges, drivers, pickup, onNodeClick }: CityMapProps) {
+export function CityMap({ nodes, edges, drivers, pickup, onNodeClick, onEdgeClick }: CityMapProps) {
   const byId = new Map(nodes.map((n) => [n.id, n]));
   const padding = 20;
   const maxX = Math.max(0, ...nodes.map((n) => n.x)) + padding;
@@ -32,15 +33,26 @@ export function CityMap({ nodes, edges, drivers, pickup, onNodeClick }: CityMapP
         const to = byId.get(edge.to);
         if (!from || !to) return null;
         return (
-          <line
-            key={edge.id}
-            x1={from.x}
-            y1={from.y}
-            x2={to.x}
-            y2={to.y}
-            stroke={edge.closed ? "#e5484d" : "#2a3040"}
-            strokeWidth={3}
-          />
+          <g key={edge.id}>
+            <line x1={from.x} y1={from.y} x2={to.x} y2={to.y} stroke={edge.closed ? "#e5484d" : "#2a3040"} strokeWidth={3} />
+            {onEdgeClick && (
+              // invisible wide stroke: a generous click target without
+              // making the visible road look thick
+              <line
+                id={`edge-${edge.id}`}
+                x1={from.x}
+                y1={from.y}
+                x2={to.x}
+                y2={to.y}
+                stroke="transparent"
+                strokeWidth={12}
+                style={{ cursor: "pointer" }}
+                onClick={() => onEdgeClick(edge.id)}
+              >
+                <title>{edge.closed ? "Closed" : "Click to close this road"}</title>
+              </line>
+            )}
+          </g>
         );
       })}
       {nodes.map((node) => (
