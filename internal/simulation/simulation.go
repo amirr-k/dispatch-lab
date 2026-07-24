@@ -216,9 +216,11 @@ func (s *Simulation) handle(cmd Command) {
 		s.handlePlaceOrder(c)
 	case SetPaused:
 		s.paused = c.Paused
+		s.emit(domain.EventSimulationPaused, map[string]any{"paused": s.paused})
 	case SetSpeed:
 		if c.Multiplier > 0 {
 			s.speed = c.Multiplier
+			s.emit(domain.EventSimulationSpeed, map[string]any{"multiplier": s.speed})
 		}
 	case Reset:
 		s.reset()
@@ -315,7 +317,10 @@ func (s *Simulation) snapshotPayload() map[string]any {
 		})
 	}
 
-	return map[string]any{"nodes": nodes, "edges": edges, "drivers": drivers}
+	return map[string]any{
+		"nodes": nodes, "edges": edges, "drivers": drivers,
+		"paused": s.paused, "speed": s.speed,
+	}
 }
 
 func (s *Simulation) emit(t domain.EventType, payload any) {
