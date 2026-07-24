@@ -62,9 +62,13 @@ func HandlerWithTelemetry(lookup Lookup, metrics *telemetry.Metrics, logger *slo
 		logger.Info("websocket client connected", "simulation_id", id)
 		defer logger.Info("websocket client disconnected", "simulation_id", id)
 
-		// detect client disconnect: a failed read closes the conn, which makes
-		// the write loop below fail and unwind.
+		// detect client disconnect. closing the channel rather than relying on
+		// the next write failing matters for an idle simulation: with no
+		// events to send, a write-only check would leave this goroutine and
+		// its subscription alive long after the browser was gone.
+		disconnected := make(chan struct{})
 		go func() {
+			defer close(disconnected)
 			for {
 				if _, _, err := conn.ReadMessage(); err != nil {
 					conn.Close()
@@ -84,15 +88,23 @@ func HandlerWithTelemetry(lookup Lookup, metrics *telemetry.Metrics, logger *slo
 		}
 		lastSeq := snapshot.Sequence
 
-		for event := range sub {
-			if event.Sequence <= lastSeq && event.Type != domain.EventSimulationSnapshot {
-				continue
-			}
-			if event.Sequence > lastSeq {
-				lastSeq = event.Sequence
-			}
-			if err := publish(conn, event, logger); err != nil {
+		for {
+			select {
+			case <-disconnected:
 				return
+			case event, ok := <-sub:
+				if !ok {
+					return
+				}
+				if event.Sequence <= lastSeq && event.Type != domain.EventSimulationSnapshot {
+					continue
+				}
+				if event.Sequence > lastSeq {
+					lastSeq = event.Sequence
+				}
+				if err := publish(conn, event, logger); err != nil {
+					return
+				}
 			}
 		}
 	}
