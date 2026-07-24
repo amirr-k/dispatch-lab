@@ -112,6 +112,11 @@ func (m *Manager) SetSpeed(id string, multiplier float64) error {
 	return m.submit(id, simulation.SetSpeed{Multiplier: multiplier})
 }
 
+// CloseRoad closes a road segment in a simulation.
+func (m *Manager) CloseRoad(id string, edgeID domain.EdgeID) error {
+	return m.submit(id, simulation.CloseRoad{EdgeID: edgeID})
+}
+
 // Snapshot returns a current-state snapshot event for a simulation.
 func (m *Manager) Snapshot(id string) (domain.Event, error) {
 	sim, ok := m.Get(id)

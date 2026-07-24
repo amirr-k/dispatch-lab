@@ -34,6 +34,7 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("POST /api/v1/simulations", s.createSimulation)
 	mux.HandleFunc("GET /api/v1/simulations/{id}", s.getSimulation)
 	mux.HandleFunc("POST /api/v1/simulations/{id}/orders", s.placeOrder)
+	mux.HandleFunc("POST /api/v1/simulations/{id}/closures", s.closeRoad)
 	mux.HandleFunc("POST /api/v1/simulations/{id}/pause", s.pause)
 	mux.HandleFunc("POST /api/v1/simulations/{id}/resume", s.resume)
 	mux.HandleFunc("POST /api/v1/simulations/{id}/reset", s.reset)
@@ -104,6 +105,26 @@ func (s *Server) placeOrder(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := s.mgr.PlaceOrder(r.PathValue("id"), req.Pickup, req.Destination); err != nil {
+		writeServiceError(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusAccepted)
+}
+
+type closeRoadRequest struct {
+	EdgeID domain.EdgeID `json:"edgeId"`
+}
+
+func (s *Server) closeRoad(w http.ResponseWriter, r *http.Request) {
+	var req closeRoadRequest
+	if !decode(w, r, &req) {
+		return
+	}
+	if req.EdgeID == "" {
+		writeError(w, http.StatusBadRequest, "invalid_request", "edgeId is required")
+		return
+	}
+	if err := s.mgr.CloseRoad(r.PathValue("id"), req.EdgeID); err != nil {
 		writeServiceError(w, err)
 		return
 	}

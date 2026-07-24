@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"dispatchlab/internal/domain"
 	"dispatchlab/internal/service"
 )
 
@@ -108,6 +109,51 @@ func TestPlaceOrderOnMissingSimulation(t *testing.T) {
 		placeOrderRequest{Pickup: "n-0-0", Destination: "n-1-1"})
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("expected 404, got %d", rec.Code)
+	}
+}
+
+func TestCloseRoadRejectsMissingEdgeID(t *testing.T) {
+	s := newTestServer()
+	created := doJSON(t, s.Routes(), http.MethodPost, "/api/v1/simulations", createRequest{})
+	var resp createResponse
+	json.Unmarshal(created.Body.Bytes(), &resp)
+
+	rec := doJSON(t, s.Routes(), http.MethodPost, "/api/v1/simulations/"+resp.ID+"/closures", closeRoadRequest{})
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 for missing edgeId, got %d", rec.Code)
+	}
+}
+
+func TestCloseRoadOnMissingSimulation(t *testing.T) {
+	s := newTestServer()
+	rec := doJSON(t, s.Routes(), http.MethodPost, "/api/v1/simulations/missing/closures", closeRoadRequest{EdgeID: "e-a-b"})
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("expected 404, got %d", rec.Code)
+	}
+}
+
+func TestCloseRoadAccepted(t *testing.T) {
+	s := newTestServer()
+	created := doJSON(t, s.Routes(), http.MethodPost, "/api/v1/simulations", createRequest{})
+	var resp createResponse
+	json.Unmarshal(created.Body.Bytes(), &resp)
+
+	snapRec := doJSON(t, s.Routes(), http.MethodGet, "/api/v1/simulations/"+resp.ID, nil)
+	var snap struct {
+		Payload struct {
+			Edges []struct {
+				ID string `json:"id"`
+			} `json:"edges"`
+		} `json:"payload"`
+	}
+	if err := json.Unmarshal(snapRec.Body.Bytes(), &snap); err != nil || len(snap.Payload.Edges) == 0 {
+		t.Fatalf("expected a snapshot with at least one edge, err=%v body=%s", err, snapRec.Body.String())
+	}
+
+	rec := doJSON(t, s.Routes(), http.MethodPost, "/api/v1/simulations/"+resp.ID+"/closures",
+		closeRoadRequest{EdgeID: domain.EdgeID(snap.Payload.Edges[0].ID)})
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("expected 202, got %d: %s", rec.Code, rec.Body.String())
 	}
 }
 

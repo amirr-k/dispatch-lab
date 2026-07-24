@@ -68,6 +68,9 @@ func TestCommandsOnMissingSimulationReturnErrNotFound(t *testing.T) {
 	if err := m.SetSpeed("missing", 2); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("SetSpeed: expected ErrNotFound, got %v", err)
 	}
+	if err := m.CloseRoad("missing", "e-a-b"); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("CloseRoad: expected ErrNotFound, got %v", err)
+	}
 	if _, err := m.Snapshot("missing"); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("Snapshot: expected ErrNotFound, got %v", err)
 	}
@@ -99,6 +102,50 @@ func TestSnapshotReflectsPlacedOrder(t *testing.T) {
 		time.Sleep(10 * time.Millisecond)
 	}
 	t.Fatal("expected a driver to be assigned after placing an order")
+}
+
+func TestCloseRoadReachesSimulation(t *testing.T) {
+	m := NewManager(0)
+	id, _ := m.Create("", 5, 4)
+	defer m.Shutdown()
+
+	sim, _ := m.Get(id)
+	edgeID := anyEdgeID(t, sim)
+
+	if err := m.CloseRoad(id, edgeID); err != nil {
+		t.Fatalf("CloseRoad: %v", err)
+	}
+
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		snap, err := m.Snapshot(id)
+		if err != nil {
+			t.Fatalf("Snapshot: %v", err)
+		}
+		if edgeIsClosed(t, snap, edgeID) {
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatal("expected the closed edge to show closed=true in the snapshot")
+}
+
+func anyEdgeID(t *testing.T, sim interface{ CurrentSnapshot() domain.Event }) domain.EdgeID {
+	t.Helper()
+	snap := sim.CurrentSnapshot()
+	edges := snap.Payload.(map[string]any)["edges"].([]map[string]any)
+	return edges[0]["id"].(domain.EdgeID)
+}
+
+func edgeIsClosed(t *testing.T, snap domain.Event, edgeID domain.EdgeID) bool {
+	t.Helper()
+	for _, e := range snap.Payload.(map[string]any)["edges"].([]map[string]any) {
+		if e["id"].(domain.EdgeID) == edgeID {
+			return e["closed"].(bool)
+		}
+	}
+	t.Fatalf("edge %s not found in snapshot", edgeID)
+	return false
 }
 
 func TestStreamLookupResolvesCreatedSimulation(t *testing.T) {
