@@ -4,6 +4,8 @@ interface CityMapProps {
   nodes: CityNode[];
   edges: CityEdge[];
   drivers: Record<string, Driver>;
+  pickup?: string | null;
+  onNodeClick?: (nodeId: string) => void;
 }
 
 const driverColor: Record<string, string> = {
@@ -14,7 +16,7 @@ const driverColor: Record<string, string> = {
   unavailable: "#374151",
 };
 
-export function CityMap({ nodes, edges, drivers }: CityMapProps) {
+export function CityMap({ nodes, edges, drivers, pickup, onNodeClick }: CityMapProps) {
   const byId = new Map(nodes.map((n) => [n.id, n]));
   const padding = 20;
   const maxX = Math.max(0, ...nodes.map((n) => n.x)) + padding;
@@ -42,7 +44,17 @@ export function CityMap({ nodes, edges, drivers }: CityMapProps) {
         );
       })}
       {nodes.map((node) => (
-        <circle key={node.id} cx={node.x} cy={node.y} r={2} fill="#242a38" />
+        <circle
+          key={node.id}
+          cx={node.x}
+          cy={node.y}
+          r={onNodeClick ? 6 : 2}
+          fill={node.id === pickup ? "#22c55e" : "#242a38"}
+          style={onNodeClick ? { cursor: "pointer" } : undefined}
+          onClick={onNodeClick ? () => onNodeClick(node.id) : undefined}
+        >
+          {onNodeClick && <title>{node.id}</title>}
+        </circle>
       ))}
       {Object.values(drivers).map((driver) => {
         const pos = byId.get(driver.position);
@@ -56,6 +68,9 @@ export function CityMap({ nodes, edges, drivers }: CityMapProps) {
             fill={driverColor[driver.status] ?? "#6b7280"}
             stroke="#0b0e14"
             strokeWidth={1.5}
+            // markers are display-only; without this a driver parked on a
+            // node steals the click meant for the node underneath it
+            style={{ pointerEvents: "none" }}
           >
             <title>{`${driver.id} — ${driver.status}`}</title>
           </circle>
