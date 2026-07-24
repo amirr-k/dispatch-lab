@@ -237,6 +237,13 @@ func (s *Simulation) CurrentSnapshot() domain.Event {
 	return <-reply
 }
 
+// Snapshot returns current state without going through the query channel.
+// Like Orders, it is only safe while driving a simulation headlessly in the
+// same goroutine; a live simulation must use CurrentSnapshot instead.
+func (s *Simulation) Snapshot() domain.Event {
+	return s.buildSnapshotEvent()
+}
+
 // OrderSummary is read-only info about one order's final outcome, used by
 // the comparison runner to compute metrics once a scenario finishes.
 type OrderSummary struct {
@@ -534,10 +541,12 @@ func (s *Simulation) takePending() []domain.Event {
 	return out
 }
 
-// snapshotPayload describes the city graph and initial driver state a
-// newly connected client needs before it can render anything. Only called
-// from the actor goroutine, so it never races with command handling.
-// Nodes, edges, and drivers are sorted by ID so the snapshot is byte-for-byte
+// snapshotPayload describes everything needed to resume rendering from this
+// point: the city graph, every driver's position and current route, and every
+// order's state. It has to be complete rather than minimal, because a
+// periodic snapshot is where a replay starts folding the event log forward.
+// Only called from the actor goroutine, so it never races with command
+// handling. Everything is sorted by ID so the snapshot is byte-for-byte
 // reproducible for a given seed rather than following random map order.
 func (s *Simulation) snapshotPayload() map[string]any {
 	nodeIDs := make([]domain.NodeID, 0, len(s.City.Nodes))
@@ -573,11 +582,27 @@ func (s *Simulation) snapshotPayload() map[string]any {
 		d := s.drivers[id]
 		drivers = append(drivers, map[string]any{
 			"id": d.ID, "position": d.Position, "status": d.Status,
+			"route": d.Route, "routeIndex": d.RouteIndex, "assignedOrder": d.AssignedOrder,
+		})
+	}
+
+	orderIDs := make([]domain.OrderID, 0, len(s.orders))
+	for id := range s.orders {
+		orderIDs = append(orderIDs, id)
+	}
+	sort.Slice(orderIDs, func(i, j int) bool { return orderIDs[i] < orderIDs[j] })
+	orders := make([]map[string]any, 0, len(orderIDs))
+	for _, id := range orderIDs {
+		o := s.orders[id]
+		orders = append(orders, map[string]any{
+			"id": o.ID, "pickup": o.Pickup, "destination": o.Destination,
+			"status": o.Status, "assignedDriver": o.AssignedDriver,
+			"createdAtVirtualTime": o.CreatedAtVirtualTime,
 		})
 	}
 
 	return map[string]any{
-		"nodes": nodes, "edges": edges, "drivers": drivers,
+		"nodes": nodes, "edges": edges, "drivers": drivers, "orders": orders,
 		"paused": s.paused, "speed": s.speed,
 	}
 }
