@@ -1,10 +1,10 @@
 export interface EventEnvelope {
-  SchemaVersion: number;
-  SimulationID: string;
-  Sequence: number;
-  VirtualTime: number;
-  Type: string;
-  Payload: Record<string, unknown>;
+  schemaVersion: number;
+  simulationId: string;
+  sequence: number;
+  virtualTime: number;
+  type: string;
+  payload: Record<string, unknown>;
 }
 
 export interface CityNode {
