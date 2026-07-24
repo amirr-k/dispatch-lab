@@ -13,6 +13,7 @@ import (
 	"dispatchlab/internal/domain"
 	"dispatchlab/internal/matching"
 	"dispatchlab/internal/routing"
+	"dispatchlab/internal/spatial"
 )
 
 // tickInterval is wall-clock only: it paces how fast virtual time is
@@ -22,6 +23,38 @@ const tickInterval = 500 * time.Millisecond
 // virtualStepPerTick is the deterministic amount of virtual time each tick
 // advances, independent of actual wall-clock elapsed since the last tick.
 const virtualStepPerTick = 1.0
+
+// MatchingStrategy selects how a simulation matches pending orders to
+// drivers. The comparison runner replays an identical scenario once under
+// each strategy; the live public demo always uses StrategyBaseline so order
+// placement stays immediate rather than waiting on a batch window.
+type MatchingStrategy string
+
+const (
+	StrategyBaseline  MatchingStrategy = "baseline"
+	StrategyOptimized MatchingStrategy = "optimized"
+)
+
+// Config configures a simulation beyond what New's simpler signature takes.
+// Zero-value fields fall back to sane defaults, so existing callers using
+// New are unaffected.
+type Config struct {
+	ID          string
+	Seed        int64
+	DriverCount int
+	// Strategy defaults to StrategyBaseline (immediate nearest-driver
+	// assignment) when empty.
+	Strategy MatchingStrategy
+	// BatchWindow is the virtual-time gap between optimized-matching runs.
+	// Ignored under StrategyBaseline. Defaults to 5 if <= 0.
+	BatchWindow float64
+	// CandidatesPerOrder bounds how many nearby drivers the spatial index
+	// returns per order for optimized matching. Defaults to 8 if <= 0.
+	CandidatesPerOrder int
+	// CostWeights configures optimized matching's cost function. Defaults
+	// to matching.DefaultCostWeights() if left zero-valued.
+	CostWeights matching.CostWeights
+}
 
 // Command is a message applied to a simulation on its owning goroutine.
 type Command interface{ isCommand() }
@@ -63,6 +96,26 @@ type Simulation struct {
 	paused      bool
 	speed       float64
 
+	strategy           MatchingStrategy
+	batchWindow        float64
+	nextBatchAt        float64
+	candidatesPerOrder int
+	costWeights        matching.CostWeights
+	// pendingOrders holds orders placed but not yet matched, only populated
+	// under StrategyOptimized (StrategyBaseline still assigns immediately).
+	pendingOrders []domain.OrderID
+	// driverIndex tracks idle drivers' positions for optimized matching's
+	// candidate lookups. Idle drivers don't move, so it only needs updating
+	// at idle-transition points, never on every tick. Nil under
+	// StrategyBaseline, which never consults it.
+	driverIndex  *spatial.Grid
+	gridCellSize float64
+	// totalAssignmentComputeMs sums the real wall-clock time spent inside
+	// matching calls (once per immediate assignment or per batch, never
+	// double-counted per resulting pairing) - the comparison runner's
+	// "assignment compute time" metric.
+	totalAssignmentComputeMs float64
+
 	drivers map[domain.DriverID]*domain.Driver
 	orders  map[domain.OrderID]*domain.Order
 
@@ -83,20 +136,60 @@ type Simulation struct {
 }
 
 // New builds a simulation with a deterministically generated small city and
-// driverCount drivers placed at deterministic starting nodes.
+// driverCount drivers placed at deterministic starting nodes, using the
+// immediate-assignment baseline strategy.
 func New(id string, seed int64, driverCount int) *Simulation {
-	c := city.GenerateGrid(city.DefaultGridConfig(seed))
+	return NewWithConfig(Config{ID: id, Seed: seed, DriverCount: driverCount})
+}
+
+// NewWithConfig builds a simulation with explicit matching-strategy and
+// batching configuration, used by the comparison runner to replay an
+// identical scenario under both strategies.
+func NewWithConfig(cfg Config) *Simulation {
+	if cfg.Strategy == "" {
+		cfg.Strategy = StrategyBaseline
+	}
+	if cfg.BatchWindow <= 0 {
+		cfg.BatchWindow = 5
+	}
+	if cfg.CandidatesPerOrder <= 0 {
+		cfg.CandidatesPerOrder = 8
+	}
+	if cfg.CostWeights == (matching.CostWeights{}) {
+		cfg.CostWeights = matching.DefaultCostWeights()
+	}
+
+	gridCfg := city.DefaultGridConfig(cfg.Seed)
+	c := city.GenerateGrid(gridCfg)
+	drivers := placeDrivers(c, cfg.DriverCount)
+
+	var index *spatial.Grid
+	if cfg.Strategy == StrategyOptimized {
+		index = spatial.NewGrid(gridCfg.CellSpacing)
+		for id, d := range drivers {
+			pos := c.Nodes[d.Position]
+			index.Set(string(id), spatial.Point{X: pos.X, Y: pos.Y})
+		}
+	}
+
 	return &Simulation{
-		ID:          id,
-		Seed:        seed,
-		City:        c,
-		driverCount: driverCount,
-		speed:       1,
-		drivers:     placeDrivers(c, driverCount),
-		orders:      make(map[domain.OrderID]*domain.Order),
-		commands:    make(chan Command, 32),
-		events:      make(chan domain.Event, 256),
-		queries:     make(chan chan domain.Event, 8),
+		ID:                 cfg.ID,
+		Seed:               cfg.Seed,
+		City:               c,
+		driverCount:        cfg.DriverCount,
+		speed:              1,
+		strategy:           cfg.Strategy,
+		batchWindow:        cfg.BatchWindow,
+		nextBatchAt:        cfg.BatchWindow,
+		candidatesPerOrder: cfg.CandidatesPerOrder,
+		costWeights:        cfg.CostWeights,
+		driverIndex:        index,
+		gridCellSize:       gridCfg.CellSpacing,
+		drivers:            drivers,
+		orders:             make(map[domain.OrderID]*domain.Order),
+		commands:           make(chan Command, 32),
+		events:             make(chan domain.Event, 256),
+		queries:            make(chan chan domain.Event, 8),
 	}
 }
 
@@ -142,6 +235,34 @@ func (s *Simulation) CurrentSnapshot() domain.Event {
 	reply := make(chan domain.Event, 1)
 	s.queries <- reply
 	return <-reply
+}
+
+// OrderSummary is read-only info about one order's final outcome, used by
+// the comparison runner to compute metrics once a scenario finishes.
+type OrderSummary struct {
+	ID                   domain.OrderID
+	Status               domain.OrderStatus
+	CreatedAtVirtualTime float64
+}
+
+// Orders returns every order's current status. Only safe to call directly
+// (as the comparison runner does) when driving a simulation headlessly in
+// the same goroutine — like CurrentSnapshot, it would need the query
+// channel instead if called while Run's actor loop is active elsewhere.
+func (s *Simulation) Orders() []OrderSummary {
+	out := make([]OrderSummary, 0, len(s.orders))
+	for _, o := range s.orders {
+		out = append(out, OrderSummary{ID: o.ID, Status: o.Status, CreatedAtVirtualTime: o.CreatedAtVirtualTime})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
+	return out
+}
+
+// TotalAssignmentComputeMs is the cumulative real wall-clock time spent
+// inside matching calls so far — the comparison runner's "assignment
+// compute time" metric.
+func (s *Simulation) TotalAssignmentComputeMs() float64 {
+	return s.totalAssignmentComputeMs
 }
 
 // TrySubmit enqueues a command without blocking. It returns false when the
@@ -362,6 +483,17 @@ func (s *Simulation) reset() {
 	s.orders = make(map[domain.OrderID]*domain.Order)
 	s.virtualTime = 0
 	s.nextOrderID = 0
+	s.pendingOrders = nil
+	s.nextBatchAt = s.batchWindow
+
+	if s.driverIndex != nil {
+		s.driverIndex = spatial.NewGrid(s.gridCellSize)
+		for id, d := range s.drivers {
+			pos := s.City.Nodes[d.Position]
+			s.driverIndex.Set(string(id), spatial.Point{X: pos.X, Y: pos.Y})
+		}
+	}
+
 	s.emit(domain.EventSimulationSnapshot, s.snapshotPayload())
 }
 
@@ -480,9 +612,18 @@ func (s *Simulation) handlePlaceOrder(cmd PlaceOrder) {
 		"destinationNodeId": cmd.Destination,
 	})
 
+	// under optimized matching, orders wait for the next batch window
+	// instead of being assigned immediately; runBatch (called from tick)
+	// picks them up from here.
+	if s.strategy == StrategyOptimized {
+		s.pendingOrders = append(s.pendingOrders, orderID)
+		return
+	}
+
 	start := time.Now()
 	driverID, toPickup, ok := matching.Baseline(s.City, s.drivers, cmd.Pickup)
 	computeMs := float64(time.Since(start).Microseconds()) / 1000.0
+	s.totalAssignmentComputeMs += computeMs
 
 	if !ok {
 		order.Status = domain.OrderUnassignable
@@ -493,39 +634,95 @@ func (s *Simulation) handlePlaceOrder(cmd PlaceOrder) {
 		return
 	}
 
-	toDestination, ok := routing.FindRoute(s.City, cmd.Pickup, cmd.Destination)
+	s.applyAssignment(matching.Assignment{OrderID: orderID, DriverID: driverID, ToPickup: toPickup}, computeMs)
+}
+
+// runBatch matches every currently pending order (StrategyOptimized only)
+// against idle drivers in one joint solve. Orders it can't place this round
+// either get a definitive order.unassignable (genuinely no reachable
+// driver) or simply remain pending for the next window (lost this round's
+// competition to a lower-cost order, but not impossible).
+func (s *Simulation) runBatch() {
+	if len(s.pendingOrders) == 0 {
+		return
+	}
+
+	orders := make([]*domain.Order, 0, len(s.pendingOrders))
+	for _, id := range s.pendingOrders {
+		orders = append(orders, s.orders[id])
+	}
+
+	assigned, infeasible, computeMs := matching.Optimized(
+		s.City, s.drivers, orders, s.driverIndex, s.candidatesPerOrder, s.costWeights, s.virtualTime,
+	)
+	s.totalAssignmentComputeMs += computeMs
+
+	resolved := make(map[domain.OrderID]bool, len(assigned)+len(infeasible))
+	for _, a := range assigned {
+		resolved[a.OrderID] = true
+		s.applyAssignment(a, computeMs)
+	}
+	for _, id := range infeasible {
+		resolved[id] = true
+		order := s.orders[id]
+		order.Status = domain.OrderUnassignable
+		s.emit(domain.EventOrderUnassignable, map[string]any{
+			"orderId": id,
+			"reason":  "no available driver can reach the pickup",
+		})
+	}
+
+	remaining := s.pendingOrders[:0]
+	for _, id := range s.pendingOrders {
+		if !resolved[id] {
+			remaining = append(remaining, id)
+		}
+	}
+	s.pendingOrders = remaining
+}
+
+// applyAssignment commits a driver-order pairing decided by either matching
+// strategy: computes the destination leg, updates driver/order state, and
+// emits the same event sequence regardless of which strategy produced the
+// pairing.
+func (s *Simulation) applyAssignment(a matching.Assignment, computeMs float64) {
+	order := s.orders[a.OrderID]
+	toDestination, ok := routing.FindRoute(s.City, order.Pickup, order.Destination)
 	if !ok {
 		order.Status = domain.OrderUnassignable
 		s.emit(domain.EventOrderUnassignable, map[string]any{
-			"orderId": orderID,
+			"orderId": order.ID,
 			"reason":  "no path from pickup to destination",
 		})
 		return
 	}
 
-	driver := s.drivers[driverID]
-	fullRoute := append(append([]domain.NodeID{}, toPickup.Nodes...), toDestination.Nodes[1:]...)
+	driver := s.drivers[a.DriverID]
+	fullRoute := append(append([]domain.NodeID{}, a.ToPickup.Nodes...), toDestination.Nodes[1:]...)
 	driver.Route = fullRoute
 	driver.RouteIndex = 0
 	driver.Status = domain.DriverEnRouteToPick
-	driver.AssignedOrder = orderID
+	driver.AssignedOrder = order.ID
+	if s.driverIndex != nil {
+		s.driverIndex.Remove(string(a.DriverID))
+	}
 
 	order.Status = domain.OrderAssigned
-	order.AssignedDriver = driverID
+	order.AssignedDriver = a.DriverID
 
 	s.emit(domain.EventRouteComputed, map[string]any{
-		"driverId": driverID,
+		"driverId": a.DriverID,
 		"nodeIds":  fullRoute,
-		"distance": toPickup.Distance + toDestination.Distance,
+		"distance": a.ToPickup.Distance + toDestination.Distance,
 	})
 	s.emit(domain.EventOrderAssigned, map[string]any{
-		"orderId":              orderID,
-		"driverId":             driverID,
-		"pickupEtaVirtualTime": s.virtualTime + toPickup.Distance,
+		"orderId":              order.ID,
+		"driverId":             a.DriverID,
+		"pickupEtaVirtualTime": s.virtualTime + a.ToPickup.Distance,
 		"assignmentComputeMs":  computeMs,
 	})
 	s.emit(domain.EventDriverStatusChanged, map[string]any{
-		"driverId": driverID,
+		"driverId": a.DriverID,
 		"status":   driver.Status,
 	})
 }
@@ -574,7 +771,17 @@ func (s *Simulation) tick() {
 			d.Route = nil
 			d.RouteIndex = 0
 			d.AssignedOrder = ""
+			d.IdleSince = s.virtualTime
+			if s.driverIndex != nil {
+				pos := s.City.Nodes[d.Position]
+				s.driverIndex.Set(string(id), spatial.Point{X: pos.X, Y: pos.Y})
+			}
 			s.emit(domain.EventDriverStatusChanged, map[string]any{"driverId": id, "status": d.Status})
 		}
+	}
+
+	if s.strategy == StrategyOptimized && s.virtualTime >= s.nextBatchAt {
+		s.runBatch()
+		s.nextBatchAt += s.batchWindow
 	}
 }
