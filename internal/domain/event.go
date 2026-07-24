@@ -29,4 +29,9 @@ type Event struct {
 	VirtualTime   float64   `json:"virtualTime"`
 	Type          EventType `json:"type"`
 	Payload       any       `json:"payload"`
+	// TraceID ties an event back to the request that caused it, so a command
+	// can be followed from the HTTP handler through matching and routing to
+	// the moment it reaches a browser. Empty for events produced by the
+	// simulation's own clock rather than by a command.
+	TraceID string `json:"traceId,omitempty"`
 }
