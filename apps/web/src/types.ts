@@ -30,5 +30,5 @@ export interface Assignment {
   orderId: string;
   driverId: string;
   pickupEtaVirtualTime: number;
-  assignmentComputeMs: number;
+  pickupDistance: number;
 }

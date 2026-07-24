@@ -88,7 +88,7 @@ func TestOptimizedStrategyDeterministic(t *testing.T) {
 		return evs
 	}
 
-	a, b := normalize(run()), normalize(run())
+	a, b := run(), run()
 	if !reflect.DeepEqual(a, b) {
 		t.Fatal("expected the optimized strategy to produce identical event sequences for identical input")
 	}

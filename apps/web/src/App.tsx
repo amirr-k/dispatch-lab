@@ -111,7 +111,7 @@ function App() {
             >
               <div>Driver {assignment.driverId} assigned</div>
               <div>Pickup ETA: {assignment.pickupEtaVirtualTime.toFixed(1)}</div>
-              <div>Assignment computed in: {assignment.assignmentComputeMs.toFixed(2)}ms</div>
+              <div>Distance to pickup: {assignment.pickupDistance.toFixed(1)}</div>
             </div>
           )}
         </main>

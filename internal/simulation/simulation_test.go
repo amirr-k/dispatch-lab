@@ -27,28 +27,6 @@ func runScenario(seed int64) []domain.Event {
 	return evs
 }
 
-// normalize strips the one measured, wall-clock-derived field from the event
-// stream (assignment compute latency) so the rest can be compared for exact
-// determinism. That latency is an observability metric, not simulation state.
-func normalize(evs []domain.Event) []domain.Event {
-	out := make([]domain.Event, len(evs))
-	for i, e := range evs {
-		if e.Type == domain.EventOrderAssigned {
-			if m, ok := e.Payload.(map[string]any); ok {
-				cp := make(map[string]any, len(m))
-				for k, v := range m {
-					if k != "assignmentComputeMs" {
-						cp[k] = v
-					}
-				}
-				e.Payload = cp
-			}
-		}
-		out[i] = e
-	}
-	return out
-}
-
 // TestDeterministicReplay is the Phase 1 exit gate: the same seed and the same
 // commands must produce the same event sequence.
 func TestDeterministicReplay(t *testing.T) {
@@ -58,7 +36,7 @@ func TestDeterministicReplay(t *testing.T) {
 	if len(a) == 0 {
 		t.Fatal("scenario produced no events")
 	}
-	if !reflect.DeepEqual(normalize(a), normalize(b)) {
+	if !reflect.DeepEqual(a, b) {
 		t.Fatal("same seed and commands produced different event sequences")
 	}
 	assertSequential(t, a)
