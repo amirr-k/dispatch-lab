@@ -9,6 +9,8 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
@@ -22,11 +24,20 @@ import (
 
 const (
 	defaultAddr = ":8080"
-	// maxSimulations bounds guest-created simulations until phase 6 adds
-	// session-scoped quotas; a flat cap is the simplest safe default.
+	// maxSimulations is the process-wide ceiling, on top of the per-session
+	// quota. The quota stops one visitor taking more than their share; this
+	// stops many visitors between them exhausting the machine.
 	maxSimulations = 50
 	// shutdownTimeout bounds how long in-flight requests get to finish.
 	shutdownTimeout = 10 * time.Second
+	// defaultRatePerSecond and defaultRateBurst are generous for a person
+	// clicking a map and restrictive for a script hammering the API.
+	defaultRatePerSecond = 10
+	defaultRateBurst     = 30
+	// readHeaderTimeout bounds how long a client may take to send its
+	// headers, which is what stops a slow-loris connection from occupying a
+	// server goroutine indefinitely.
+	readHeaderTimeout = 10 * time.Second
 )
 
 func main() {
@@ -51,24 +62,53 @@ func run(logger *slog.Logger) error {
 	}
 	defer func() { _ = eventStore.Close() }()
 
-	mgr := service.NewManagerWithConfig(service.ManagerConfig{
-		Max:     maxSimulations,
+	// the curated runs are provisioned before the listener opens, so a
+	// showcase URL never 404s on a freshly deployed instance.
+	if err := service.ProvisionShowcases(ctx, eventStore, service.DefaultShowcaseRuns(), metrics, logger); err != nil {
+		return err
+	}
+
+	sessions := service.NewSessions(service.SessionsConfig{
 		Store:   eventStore,
 		Metrics: metrics,
 		Logger:  logger,
 	})
+
+	mgr := service.NewManagerWithConfig(service.ManagerConfig{
+		Max:      maxSimulations,
+		Store:    eventStore,
+		Metrics:  metrics,
+		Logger:   logger,
+		Sessions: sessions,
+	})
 	defer mgr.Shutdown()
 
+	retention := service.NewRetention(service.RetentionConfig{
+		Store:    eventStore,
+		Sessions: sessions,
+		Metrics:  metrics,
+		Logger:   logger,
+	})
+	go retention.Run(ctx)
+
 	server := dispatchhttp.NewServerWithConfig(dispatchhttp.ServerConfig{
-		Manager:     mgr,
-		Comparisons: service.NewComparisonsWithStore(eventStore, metrics, logger),
-		Store:       eventStore,
-		Metrics:     metrics,
-		Logger:      logger,
+		Manager:           mgr,
+		Comparisons:       service.NewComparisonsWithStore(eventStore, metrics, logger),
+		Store:             eventStore,
+		Sessions:          sessions,
+		Metrics:           metrics,
+		Logger:            logger,
+		AllowedOrigins:    splitList(os.Getenv("ALLOWED_ORIGINS")),
+		RequestsPerSecond: envFloat("RATE_LIMIT_PER_SECOND", defaultRatePerSecond),
+		RequestBurst:      envFloat("RATE_LIMIT_BURST", defaultRateBurst),
 	})
 
 	addr := env("ADDR", defaultAddr)
-	httpServer := &http.Server{Addr: addr, Handler: server.Routes()}
+	httpServer := &http.Server{
+		Addr:              addr,
+		Handler:           server.Routes(),
+		ReadHeaderTimeout: readHeaderTimeout,
+	}
 
 	errs := make(chan error, 1)
 	go func() {
@@ -116,6 +156,34 @@ func env(key, fallback string) string {
 		return v
 	}
 	return fallback
+}
+
+func envFloat(key string, fallback float64) float64 {
+	raw := os.Getenv(key)
+	if raw == "" {
+		return fallback
+	}
+	parsed, err := strconv.ParseFloat(raw, 64)
+	if err != nil {
+		return fallback
+	}
+	return parsed
+}
+
+// splitList parses a comma-separated environment value, dropping blanks so a
+// trailing comma is not read as an empty entry.
+func splitList(raw string) []string {
+	if strings.TrimSpace(raw) == "" {
+		return nil
+	}
+	parts := strings.Split(raw, ",")
+	out := make([]string, 0, len(parts))
+	for _, part := range parts {
+		if trimmed := strings.TrimSpace(part); trimmed != "" {
+			out = append(out, trimmed)
+		}
+	}
+	return out
 }
 
 func logLevel() slog.Level {
