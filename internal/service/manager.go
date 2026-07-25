@@ -321,20 +321,34 @@ func (m *Manager) Snapshot(ctx context.Context, id string) (domain.Event, error)
 	return sim.CurrentSnapshot(), nil
 }
 
-// MarkShowcase retains a run permanently so its replay URL keeps working. It
-// flushes a final snapshot first, so the stored history ends on the state the
-// visitor actually saw. A run that was never persisted cannot be showcased.
+// MarkShowcase retains a run permanently so its replay URL keeps working. For
+// a still-running simulation it writes a final snapshot and forces the
+// recorder to flush, so the stored history ends on the state the visitor
+// actually saw - the recorder otherwise only writes on its own batch/interval
+// schedule, and without a forced flush here a replay opened immediately after
+// saving could be missing whatever hadn't reached it yet. A completed run
+// needs neither: its recorder already flushed everything on the way out.
 func (m *Manager) MarkShowcase(ctx context.Context, id string) error {
 	if m.cfg.Store == nil {
 		return ErrNotFound
 	}
 
-	sim, live := m.Get(id)
+	m.mu.Lock()
+	e, live := m.entries[id]
+	m.mu.Unlock()
+
 	if live {
 		if err := m.Authorize(ctx, id); err != nil {
 			return err
 		}
-		m.writeFinalSnapshot(ctx, id, sim)
+		m.writeFinalSnapshot(ctx, id, e.sim)
+
+		flushCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+		defer cancel()
+		if err := e.recorder.Flush(flushCtx); err != nil {
+			m.cfg.Logger.Error("could not flush pending events before showcasing",
+				"simulation_id", id, "error", err)
+		}
 	}
 
 	err := m.cfg.Store.MarkShowcase(ctx, id, time.Now().UTC())

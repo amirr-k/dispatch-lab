@@ -70,7 +70,11 @@ type Recorder struct {
 	// snapshotDue is a one-slot signal, so a snapshot request never blocks the
 	// forwarding loop and requests cannot pile up.
 	snapshotDue chan struct{}
-	done        chan struct{}
+	// flushRequests carries a reply channel per request rather than a bare
+	// signal, since a caller forcing a flush (showcasing a run) needs to know
+	// once it has actually happened, not just that it was requested.
+	flushRequests chan chan struct{}
+	done          chan struct{}
 }
 
 // NewRecorder returns a recorder for one simulation. A nil store disables
@@ -78,10 +82,11 @@ type Recorder struct {
 func NewRecorder(simulationID string, cfg RecorderConfig) *Recorder {
 	cfg.withDefaults()
 	return &Recorder{
-		cfg:          cfg,
-		simulationID: simulationID,
-		snapshotDue:  make(chan struct{}, 1),
-		done:         make(chan struct{}),
+		cfg:           cfg,
+		simulationID:  simulationID,
+		snapshotDue:   make(chan struct{}, 1),
+		flushRequests: make(chan chan struct{}),
+		done:          make(chan struct{}),
 	}
 }
 
@@ -109,6 +114,30 @@ func (r *Recorder) Tap(ctx context.Context, in <-chan domain.Event) <-chan domai
 
 // Done reports when the writer has flushed everything and exited.
 func (r *Recorder) Done() <-chan struct{} { return r.done }
+
+// Flush forces whatever is currently buffered to be written immediately,
+// waiting for the writer to acknowledge it before returning. Without this, a
+// caller that needs the store to be caught up right now - showcasing a run,
+// say - can only wait out FlushInterval and hope, since the normal path
+// writes on a fixed cadence rather than on demand.
+func (r *Recorder) Flush(ctx context.Context) error {
+	reply := make(chan struct{})
+	select {
+	case r.flushRequests <- reply:
+	case <-r.done:
+		return nil // the writer already exited, flushing everything on its way out.
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+	select {
+	case <-reply:
+		return nil
+	case <-r.done:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
 
 func forward(in <-chan domain.Event, out chan<- domain.Event) {
 	for event := range in {
@@ -157,26 +186,59 @@ func (r *Recorder) writeLoop(ctx context.Context, queue <-chan domain.Event) {
 		}
 	}
 
+	// enqueue reports false when the queue has closed, so both the normal
+	// receive loop and a forced drain can share the same encode-and-append
+	// step and stop the same way.
+	enqueue := func(event domain.Event, ok bool) bool {
+		if !ok {
+			return false
+		}
+		record, err := store.EventFrom(event, event.TraceID, time.Now().UTC())
+		if err != nil {
+			r.cfg.Metrics.PersistenceErrors().Inc()
+			r.cfg.Logger.Error("could not encode an event for persistence",
+				"simulation_id", r.simulationID, "sequence", event.Sequence, "error", err)
+			return true
+		}
+		batch = append(batch, record)
+		if len(batch) >= r.cfg.BatchSize {
+			flush()
+		}
+		return true
+	}
+
 	for {
 		select {
 		case event, ok := <-queue:
-			if !ok {
+			if !enqueue(event, ok) {
 				flush()
 				return
 			}
-			record, err := store.EventFrom(event, event.TraceID, time.Now().UTC())
-			if err != nil {
-				r.cfg.Metrics.PersistenceErrors().Inc()
-				r.cfg.Logger.Error("could not encode an event for persistence",
-					"simulation_id", r.simulationID, "sequence", event.Sequence, "error", err)
-				continue
-			}
-			batch = append(batch, record)
-			if len(batch) >= r.cfg.BatchSize {
-				flush()
-			}
 		case <-ticker.C:
 			flush()
+		case reply := <-r.flushRequests:
+			// drain whatever is already sitting in the queue's buffer too -
+			// otherwise a burst that arrived moments ago but hasn't been
+			// read into batch yet would flush everything except exactly
+			// the events the caller most wants included.
+			closed := false
+		drain:
+			for {
+				select {
+				case event, ok := <-queue:
+					if !enqueue(event, ok) {
+						closed = true
+						break drain
+					}
+				default:
+					break drain
+				}
+			}
+			flush()
+			close(reply)
+			if closed {
+				return
+			}
 		case <-ctx.Done():
 			flush()
 			return

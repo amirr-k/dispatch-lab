@@ -193,6 +193,85 @@ func TestRecorderWritesInBatches(t *testing.T) {
 	}
 }
 
+// showcasing a run needs the store caught up right now, not whenever the
+// next scheduled flush happens to land - this is the gap a real save-then-
+// immediately-open-replay click surfaced (MarkShowcase wrote a final
+// snapshot but never forced the event log itself to flush).
+func TestFlushWritesBufferedEventsImmediately(t *testing.T) {
+	ctx := context.Background()
+	s := store.NewMemory()
+
+	recorder := replay.NewRecorder("sim-1", replay.RecorderConfig{
+		Store: s,
+		// long enough that neither trigger could plausibly fire on its own
+		// during this test - only Flush should be moving anything.
+		BatchSize:     1000,
+		FlushInterval: time.Hour,
+	})
+
+	in := make(chan domain.Event, 16)
+	out := recorder.Tap(ctx, in)
+	for i := 1; i <= 5; i++ {
+		in <- testEvent(i)
+	}
+	// draining forwarded copies guarantees forwardAndQueue has at least
+	// attempted to enqueue every one of these five before Flush is called -
+	// without it, this test would carry the same race it is proving Flush
+	// closes for a real caller.
+	for i := 0; i < 5; i++ {
+		<-out
+	}
+
+	if stored, _ := s.Events(ctx, "sim-1", 0, 100); len(stored) != 0 {
+		t.Fatalf("expected nothing persisted yet, got %d events", len(stored))
+	}
+
+	if err := recorder.Flush(ctx); err != nil {
+		t.Fatalf("Flush: %v", err)
+	}
+
+	stored, err := s.Events(ctx, "sim-1", 0, 100)
+	if err != nil {
+		t.Fatalf("Events: %v", err)
+	}
+	if len(stored) != 5 {
+		t.Fatalf("persisted %d events after Flush, want 5", len(stored))
+	}
+
+	close(in)
+	drain(out)
+	<-recorder.Done()
+}
+
+// a second Flush after the writer has already exited must return promptly
+// rather than block forever waiting for a writeLoop that is no longer there
+// to answer flushRequests.
+func TestFlushAfterRecorderHasStoppedReturnsImmediately(t *testing.T) {
+	ctx := context.Background()
+	s := store.NewMemory()
+
+	recorder := replay.NewRecorder("sim-1", replay.RecorderConfig{Store: s})
+
+	in := make(chan domain.Event, 4)
+	out := recorder.Tap(ctx, in)
+	in <- testEvent(1)
+	close(in)
+	drain(out)
+	<-recorder.Done()
+
+	done := make(chan error, 1)
+	go func() { done <- recorder.Flush(ctx) }()
+
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("Flush after stop: %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("Flush blocked after the writer had already exited")
+	}
+}
+
 func TestRecorderWritesPeriodicSnapshots(t *testing.T) {
 	ctx := context.Background()
 	s := store.NewMemory()
