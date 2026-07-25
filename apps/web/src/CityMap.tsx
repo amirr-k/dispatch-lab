@@ -58,6 +58,7 @@ export function CityMap({ nodes, edges, drivers, pickup, onNodeClick, onEdgeClic
       {nodes.map((node) => (
         <circle
           key={node.id}
+          id={`node-${node.id}`}
           cx={node.x}
           cy={node.y}
           r={onNodeClick ? 6 : 2}

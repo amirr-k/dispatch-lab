@@ -10,6 +10,9 @@ node_modules/
 apps/web/dist/
 apps/web/.vite/
 *.tsbuildinfo
+apps/web/test-results/
+apps/web/playwright-report/
+apps/web/blob-report/
 
 # env and local secrets
 .env
