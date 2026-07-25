@@ -74,7 +74,7 @@ function App() {
           )}
           <button onClick={togglePaused}>{paused ? "Resume" : "Pause"}</button>
           <button onClick={reset}>Reset</button>
-          <select value={speed} onChange={(e) => changeSpeed(Number(e.target.value))}>
+          <select aria-label="Playback speed" value={speed} onChange={(e) => changeSpeed(Number(e.target.value))}>
             {SPEEDS.map((s) => (
               <option key={s} value={s}>
                 {s}x
