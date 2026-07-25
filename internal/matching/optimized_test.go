@@ -169,3 +169,62 @@ func TestOptimizedWaitTimeFavorsOlderOrders(t *testing.T) {
 		t.Fatalf("expected the older order to win an equal-distance tie once wait time is weighted, got %+v", assigned)
 	}
 }
+
+func TestOptimizedIdleTimeFavorsLongerIdleDrivers(t *testing.T) {
+	// two idle drivers competing for one order at equal pickup distance;
+	// the driver that's been idle longer should win once DriverIdleTime is
+	// weighted - the fairness signal baseline has no notion of at all.
+	edge := func(from, to domain.NodeID) domain.Edge {
+		return domain.Edge{ID: domain.EdgeID("e-" + string(from) + "-" + string(to)), From: from, To: to, Weight: 1}
+	}
+	c := &domain.City{
+		Nodes: map[domain.NodeID]domain.Node{"A": {ID: "A"}, "P1": {ID: "P1"}, "P2": {ID: "P2"}},
+		Edges: map[domain.NodeID][]domain.Edge{
+			"A":  {edge("A", "P1"), edge("A", "P2")},
+			"P1": {edge("P1", "A")},
+			"P2": {edge("P2", "A")},
+		},
+	}
+	drivers := map[domain.DriverID]*domain.Driver{
+		"long-idle":  {ID: "long-idle", Position: "P1", Status: domain.DriverIdle, IdleSince: 0},
+		"short-idle": {ID: "short-idle", Position: "P2", Status: domain.DriverIdle, IdleSince: 4},
+	}
+	orders := []*domain.Order{order("o1", "A", 5)}
+	index := gridAt(map[domain.DriverID]spatial.Point{"long-idle": {}, "short-idle": {}})
+
+	assigned, _, _ := Optimized(c, drivers, orders, index, 10, DefaultCostWeights(), 5)
+	if len(assigned) != 1 || assigned[0].DriverID != "long-idle" {
+		t.Fatalf("expected the longer-idle driver to win an equal-distance tie once idle time is weighted, got %+v", assigned)
+	}
+}
+
+func TestOptimizedZeroIdleTimeWeightIgnoresIdleDuration(t *testing.T) {
+	// with DriverIdleTime weighted at zero, idle duration must not affect
+	// the outcome - a tie-break by driver id is the only thing left, so
+	// this also pins that tie-break down explicitly.
+	edge := func(from, to domain.NodeID) domain.Edge {
+		return domain.Edge{ID: domain.EdgeID("e-" + string(from) + "-" + string(to)), From: from, To: to, Weight: 1}
+	}
+	c := &domain.City{
+		Nodes: map[domain.NodeID]domain.Node{"A": {ID: "A"}, "P1": {ID: "P1"}, "P2": {ID: "P2"}},
+		Edges: map[domain.NodeID][]domain.Edge{
+			"A":  {edge("A", "P1"), edge("A", "P2")},
+			"P1": {edge("P1", "A")},
+			"P2": {edge("P2", "A")},
+		},
+	}
+	drivers := map[domain.DriverID]*domain.Driver{
+		"A-driver": {ID: "A-driver", Position: "P2", Status: domain.DriverIdle, IdleSince: 4},
+		"Z-driver": {ID: "Z-driver", Position: "P1", Status: domain.DriverIdle, IdleSince: 0},
+	}
+	orders := []*domain.Order{order("o1", "A", 5)}
+	index := gridAt(map[domain.DriverID]spatial.Point{"A-driver": {}, "Z-driver": {}})
+
+	weights := DefaultCostWeights()
+	weights.DriverIdleTime = 0
+
+	assigned, _, _ := Optimized(c, drivers, orders, index, 10, weights, 5)
+	if len(assigned) != 1 || assigned[0].DriverID != "A-driver" {
+		t.Fatalf("expected the lexicographically-first driver id to win once idle time carries no weight, got %+v", assigned)
+	}
+}
