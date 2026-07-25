@@ -1,0 +1,10 @@
+# the backend image only needs the go module - everything below is either
+# frontend tooling or generated output the build never touches.
+apps/web/node_modules/
+apps/web/dist/
+apps/web/test-results/
+apps/web/playwright-report/
+.git/
+docs/
+resume/
+benchmarks/

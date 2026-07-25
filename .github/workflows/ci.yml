@@ -1,0 +1,169 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  backend:
+    name: backend (fmt, vet, build, unit/race, vuln scan)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: gofmt
+        run: |
+          out=$(gofmt -l .)
+          if [ -n "$out" ]; then
+            echo "not gofmt-formatted:"
+            echo "$out"
+            exit 1
+          fi
+
+      - name: go vet
+        run: go vet ./...
+
+      - name: build
+        run: go build ./...
+
+      # DISPATCHLAB_TEST_DATABASE_URL is unset here, so the Postgres store
+      # tests skip themselves - they run for real in the postgres-integration
+      # job below, against a real database.
+      - name: unit and property tests (race)
+        run: go test ./... -race -count=1
+
+      - name: dependency vulnerability scan
+        run: |
+          go install golang.org/x/vuln/cmd/govulncheck@latest
+          govulncheck ./...
+
+  postgres-integration:
+    name: postgres integration (migrations, real store)
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: dispatchlab
+          POSTGRES_PASSWORD: dispatchlab
+          POSTGRES_DB: dispatchlab_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd="pg_isready -U dispatchlab"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=10
+    env:
+      DISPATCHLAB_TEST_DATABASE_URL: postgres://dispatchlab:dispatchlab@localhost:5432/dispatchlab_test?sslmode=disable
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: store conformance + migration tests against real Postgres
+        run: go test ./internal/store/... ./db/... -race -count=1
+
+      # a second check the store tests don't cover: the server's own
+      # startup path (openStore -> postgres.Open -> embedded migrations)
+      # applying cleanly to a genuinely empty database, then answering
+      # /health/ready once connected.
+      - name: server boots and migrates against an empty database
+        run: |
+          go build -o /tmp/dispatchlab-server ./cmd/server
+          DATABASE_URL="$DISPATCHLAB_TEST_DATABASE_URL" ADDR=":8090" /tmp/dispatchlab-server &
+          server_pid=$!
+          for i in $(seq 1 30); do
+            if curl -sf http://localhost:8090/health/ready; then
+              echo "ready"
+              kill $server_pid
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "server never became ready"
+          kill $server_pid || true
+          exit 1
+
+  frontend:
+    name: frontend (lint, typecheck, build, unit tests, audit)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: apps/web
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: apps/web/package-lock.json
+
+      - run: npm ci
+      - name: lint
+        run: npm run lint
+      - name: typecheck and build
+        run: npm run build
+      - name: unit tests
+        run: npm test
+      - name: dependency vulnerability scan
+        run: npm audit --audit-level=high
+
+  e2e:
+    name: end-to-end (Playwright, real backend + browser)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: apps/web/package-lock.json
+
+      - working-directory: apps/web
+        run: npm ci
+      - name: install chromium
+        working-directory: apps/web
+        run: npx playwright install --with-deps chromium
+      # CI=true (set by GitHub Actions for every job) makes
+      # playwright.config.ts's webServer entries always start fresh
+      # go/vite processes rather than reusing one, and no DATABASE_URL is
+      # set, so the backend falls back to its in-memory store - no
+      # database needed for this suite.
+      - name: run e2e suite
+        working-directory: apps/web
+        run: npm run test:e2e
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: playwright-report
+          path: apps/web/test-results/
+          retention-days: 7
+
+  container:
+    name: container build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - name: build backend image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: deploy/docker/Dockerfile
+          push: false
