@@ -31,10 +31,10 @@ const (
 	// shutdownFlushTimeout bounds how long shutdown waits for recorders to
 	// write their last batch before giving up on it.
 	shutdownFlushTimeout = 5 * time.Second
-	// maxOrdersPerRun bounds how many orders one simulation will accept, so
+	// MaxOrdersPerRun bounds how many orders one simulation will accept, so
 	// a visitor holding down the mouse cannot grow a run's state without
 	// limit. Resetting a run clears the count along with the orders.
-	maxOrdersPerRun = 200
+	MaxOrdersPerRun = 200
 )
 
 // tokenKey carries the requesting session's identity on the context. Putting
@@ -264,7 +264,7 @@ func (m *Manager) reserveOrder(ctx context.Context, id string) error {
 	if err := authorize(e, TokenFrom(ctx)); err != nil {
 		return err
 	}
-	if e.orders >= maxOrdersPerRun {
+	if e.orders >= MaxOrdersPerRun {
 		return ErrOrderLimit
 	}
 	e.orders++

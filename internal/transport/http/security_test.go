@@ -364,22 +364,35 @@ func TestOrderLimitPerRun(t *testing.T) {
 		Destination: domain.NodeID(nodes[len(nodes)-1].ID),
 	}
 
+	// a synchronous flood outruns the actor loop and fills the command
+	// buffer, so a 503 here is backpressure rather than the limit we are
+	// testing — wait for the actor to drain and re-send the same order.
 	limited := false
-	for i := 0; i < 250; i++ {
+	placed := 0
+	for attempts := 0; attempts < 4000 && placed <= service.MaxOrdersPerRun; attempts++ {
 		rec := do(t, h, http.MethodPost, "/api/v1/simulations/"+id+"/orders", token, order, nil)
-		if rec.Code == http.StatusTooManyRequests {
+		switch rec.Code {
+		case http.StatusTooManyRequests:
 			limited = true
 			if !strings.Contains(rec.Body.String(), "order_limit") {
 				t.Errorf("the refusal is not about the order limit: %s", rec.Body.String())
 			}
-			break
+		case http.StatusServiceUnavailable:
+			time.Sleep(time.Millisecond)
+			continue
+		case http.StatusAccepted:
+			placed++
+			continue
+		default:
+			t.Fatalf("order %d = %d %s", placed, rec.Code, rec.Body.String())
 		}
-		if rec.Code != http.StatusAccepted {
-			t.Fatalf("order %d = %d %s", i, rec.Code, rec.Body.String())
-		}
+		break
 	}
 	if !limited {
-		t.Error("250 orders on one run were never refused")
+		t.Errorf("the order limit never refused a request after %d accepted orders", placed)
+	}
+	if limited && placed != service.MaxOrdersPerRun {
+		t.Errorf("refused after %d orders, want the limit of %d", placed, service.MaxOrdersPerRun)
 	}
 }
 

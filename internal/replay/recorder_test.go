@@ -210,14 +210,29 @@ func TestRecorderWritesPeriodicSnapshots(t *testing.T) {
 
 	in := make(chan domain.Event, 128)
 	out := recorder.Tap(ctx, in)
-	for i := 1; i <= 60; i++ {
-		in <- testEvent(i)
+
+	drained := make(chan struct{})
+	go func() {
+		drain(out)
+		close(drained)
+	}()
+
+	// snapshot requests coalesce onto a one-slot signal, so a single burst of
+	// 60 events may legitimately raise only two. feeding one window at a time
+	// and waiting for each snapshot is what makes the count deterministic.
+	sequence := 0
+	for window := 1; window <= 3; window++ {
+		for i := 0; i < 20; i++ {
+			sequence++
+			in <- testEvent(sequence)
+		}
+		waitFor(t, time.Second, func() bool { return snapshotter.callCount() >= window })
 	}
+
 	close(in)
-	drain(out)
+	<-drained
 	<-recorder.Done()
 
-	waitFor(t, time.Second, func() bool { return snapshotter.callCount() >= 3 })
 	waitFor(t, time.Second, func() bool { return metrics.SnapshotsWritten().Value() >= 3 })
 
 	snapshot, err := s.SnapshotAtOrBefore(ctx, "sim-1", 1000)
