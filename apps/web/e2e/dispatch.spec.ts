@@ -89,7 +89,7 @@ test("landing, place an order, observe assignment, close a road, observe reroute
     // this is a real click landing on real overlapping geometry, not a
     // broken locator.
     await page.locator(`#edge-${targetEdgeId}`).click({ force: true });
-    await expect(page.locator(`#edge-${targetEdgeId} title`)).toHaveText("Road closed");
+    await expect(page.locator(`#edge-${targetEdgeId} title`)).toHaveText("Road closed — click to reopen");
   });
 
   await test.step("observe the reroute", async () => {
@@ -98,6 +98,14 @@ test("landing, place an order, observe assignment, close a road, observe reroute
     // actually invalidated and recomputed a route, not merely that a
     // closure was recorded.
     await expect(page.getByText(/Road closed.*[1-9]\d* routes? recalculated/)).toBeVisible({ timeout: 5_000 });
+  });
+
+  await test.step("reopen the same road", async () => {
+    // the same click target that closed it reopens it - one road, one
+    // toggle, not a separate control that only ever closes.
+    await page.locator(`#edge-${targetEdgeId}`).click({ force: true });
+    await expect(page.locator(`#edge-${targetEdgeId} title`)).not.toHaveText("Road closed — click to reopen");
+    await expect(page.getByText(/^Road reopened$/)).toBeVisible({ timeout: 5_000 });
   });
 
   const replayHref = await test.step("save the replay", async () => {

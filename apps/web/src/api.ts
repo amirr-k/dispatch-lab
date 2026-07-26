@@ -124,6 +124,12 @@ export function closeRoad(id: string, edgeId: string): Promise<void> {
   });
 }
 
+export function reopenRoad(id: string, edgeId: string): Promise<void> {
+  return request(`/api/v1/simulations/${id}/closures?edgeId=${encodeURIComponent(edgeId)}`, {
+    method: "DELETE",
+  });
+}
+
 export function pauseSimulation(id: string): Promise<void> {
   return request(`/api/v1/simulations/${id}/pause`, { method: "POST" });
 }

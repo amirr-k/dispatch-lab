@@ -38,7 +38,7 @@ export interface SimulationState {
   togglePaused: () => Promise<void>;
   reset: () => Promise<void>;
   changeSpeed: (multiplier: number) => Promise<void>;
-  closeRoad: (edgeId: string) => Promise<void>;
+  toggleRoad: (edgeId: string) => Promise<void>;
 }
 
 // describe turns an event into a sentence a non-technical visitor can read.
@@ -323,12 +323,13 @@ export function useSimulation(): SimulationState {
     (multiplier: number) => runAction((id) => api.setSpeed(id, multiplier)),
     [runAction],
   );
-  // reopening isn't supported by the backend yet, so closing an already
-  // closed road is skipped client side rather than sent as a no-op request.
-  const closeRoad = useCallback(
+  // one click closes an open road, the next reopens it - the map is the only
+  // place a visitor sees which state a road is in, so the same click target
+  // has to do both rather than only ever closing.
+  const toggleRoad = useCallback(
     (edgeId: string) => {
-      if (edges.find((e) => e.id === edgeId)?.closed) return Promise.resolve();
-      return runAction((id) => api.closeRoad(id, edgeId));
+      const closed = edges.find((e) => e.id === edgeId)?.closed;
+      return runAction((id) => (closed ? api.reopenRoad(id, edgeId) : api.closeRoad(id, edgeId)));
     },
     [runAction, edges],
   );
@@ -350,6 +351,6 @@ export function useSimulation(): SimulationState {
     togglePaused,
     reset,
     changeSpeed,
-    closeRoad,
+    toggleRoad,
   };
 }

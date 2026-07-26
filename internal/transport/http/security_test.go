@@ -110,6 +110,7 @@ func TestCommandsRequireAGuestSession(t *testing.T) {
 		{http.MethodGet, "/api/v1/simulations/any"},
 		{http.MethodPost, "/api/v1/simulations/any/orders"},
 		{http.MethodPost, "/api/v1/simulations/any/closures"},
+		{http.MethodDelete, "/api/v1/simulations/any/closures?edgeId=e-a-b"},
 		{http.MethodPost, "/api/v1/simulations/any/pause"},
 		{http.MethodPost, "/api/v1/simulations/any/reset"},
 		{http.MethodPost, "/api/v1/simulations/any/showcase"},
@@ -163,6 +164,7 @@ func TestOneSessionCannotReachAnothersSimulation(t *testing.T) {
 		{http.MethodPost, "/api/v1/simulations/" + id + "/pause", nil},
 		{http.MethodPost, "/api/v1/simulations/" + id + "/reset", nil},
 		{http.MethodPost, "/api/v1/simulations/" + id + "/closures", closeRoadRequest{EdgeID: "e-n-0-0-n-1-0"}},
+		{http.MethodDelete, "/api/v1/simulations/" + id + "/closures?edgeId=e-n-0-0-n-1-0", nil},
 		{http.MethodPost, "/api/v1/simulations/" + id + "/showcase", nil},
 	}
 	for _, attempt := range attempts {

@@ -1,6 +1,7 @@
 package simulation
 
 import (
+	"reflect"
 	"testing"
 
 	"dispatchlab/internal/domain"
@@ -138,6 +139,99 @@ func TestCloseUnknownEdgeIsANoOp(t *testing.T) {
 	}
 }
 
+func TestReopenRoadClearsBothDirections(t *testing.T) {
+	s := New("sim", scenarioSeed, scenarioDrivers)
+	s.Start()
+
+	edge := anyEdge(t, s.City)
+	reverse, ok := edgeBetween(s.City, edge.To, edge.From)
+	if !ok {
+		t.Fatalf("expected a reverse edge for %s", edge.ID)
+	}
+	s.Apply(CloseRoad{EdgeID: edge.ID})
+
+	evs := s.Apply(ReopenRoad{EdgeID: edge.ID})
+	if len(evs) != 1 || evs[0].Type != domain.EventRoadReopened {
+		t.Fatalf("expected a single road.reopened event, got %v", types(evs))
+	}
+	payload, ok := evs[0].Payload.(map[string]any)
+	if !ok {
+		t.Fatalf("expected a map payload, got %+v", evs[0].Payload)
+	}
+	ids, ok := payload["edgeIds"].([]domain.EdgeID)
+	if !ok || len(ids) != 2 {
+		t.Fatalf("expected both directions in edgeIds, got %+v", payload["edgeIds"])
+	}
+
+	if got, _ := s.City.EdgeByID(edge.ID); got.Closed {
+		t.Error("forward edge is still closed")
+	}
+	if got, _ := s.City.EdgeByID(reverse.ID); got.Closed {
+		t.Error("reverse edge is still closed")
+	}
+}
+
+func TestReopenAlreadyOpenEdgeIsANoOp(t *testing.T) {
+	s := New("sim", scenarioSeed, scenarioDrivers)
+	s.Start()
+
+	edge := anyEdge(t, s.City)
+	evs := s.Apply(ReopenRoad{EdgeID: edge.ID})
+	if len(evs) != 0 {
+		t.Fatalf("expected reopening an already-open edge to emit nothing, got %v", types(evs))
+	}
+}
+
+func TestReopenUnknownEdgeIsANoOp(t *testing.T) {
+	s := New("sim", scenarioSeed, scenarioDrivers)
+	s.Start()
+	evs := s.Apply(ReopenRoad{EdgeID: "does-not-exist"})
+	if len(evs) != 0 {
+		t.Fatalf("expected reopening an unknown edge to emit nothing, got %v", types(evs))
+	}
+}
+
+// TestReopenDoesNotDisturbAnActiveRoute proves the doc comment on ReopenRoad:
+// reopening a road a driver's current route does not use must not touch that
+// route, since reopening only ever adds paths, never removes one already
+// chosen.
+func TestReopenDoesNotDisturbAnActiveRoute(t *testing.T) {
+	s := New("sim", scenarioSeed, scenarioDrivers)
+	s.Start()
+	s.Apply(PlaceOrder{Pickup: scenarioPickup, Destination: scenarioDest})
+
+	var d *domain.Driver
+	for _, dr := range s.drivers {
+		if len(dr.Route) > 0 {
+			d = dr
+			break
+		}
+	}
+	if d == nil {
+		t.Fatal("expected an assigned driver with a route")
+	}
+	routeBefore := append([]domain.NodeID{}, d.Route...)
+
+	// close and reopen an edge nowhere on this driver's route.
+	used := map[[2]domain.NodeID]bool{}
+	for i := 0; i < len(d.Route)-1; i++ {
+		used[[2]domain.NodeID{d.Route[i], d.Route[i+1]}] = true
+		used[[2]domain.NodeID{d.Route[i+1], d.Route[i]}] = true
+	}
+	unused := anyUnusedEdge(t, s.City, used)
+
+	s.Apply(CloseRoad{EdgeID: unused.ID})
+	evs := s.Apply(ReopenRoad{EdgeID: unused.ID})
+	for _, e := range evs {
+		if e.Type == domain.EventRouteInvalidated || e.Type == domain.EventRouteComputed {
+			t.Fatalf("reopening disturbed a route it never touched: %s", e.Type)
+		}
+	}
+	if !reflect.DeepEqual(d.Route, routeBefore) {
+		t.Fatalf("driver's route changed after an unrelated reopen: %v -> %v", routeBefore, d.Route)
+	}
+}
+
 // TestCloseEdgeMakesRouteUnreachable uses a minimal 3-node line (a-b-c) with
 // no alternate path, so closing the only edge to pickup leaves genuinely no
 // route — the explicit unreachable result the exit gate calls for.
@@ -209,6 +303,20 @@ func anyEdge(t *testing.T, city *domain.City) domain.Edge {
 		}
 	}
 	t.Fatal("expected the city to have at least one edge")
+	return domain.Edge{}
+}
+
+// anyUnusedEdge returns an edge whose (from, to) pair is not in used.
+func anyUnusedEdge(t *testing.T, city *domain.City, used map[[2]domain.NodeID]bool) domain.Edge {
+	t.Helper()
+	for _, list := range city.Edges {
+		for _, e := range list {
+			if !used[[2]domain.NodeID{e.From, e.To}] {
+				return e
+			}
+		}
+	}
+	t.Fatal("expected to find an edge not on any active route")
 	return domain.Edge{}
 }
 

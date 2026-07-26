@@ -100,6 +100,7 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("GET /api/v1/simulations/{id}", s.getSimulation)
 	mux.HandleFunc("POST /api/v1/simulations/{id}/orders", s.placeOrder)
 	mux.HandleFunc("POST /api/v1/simulations/{id}/closures", s.closeRoad)
+	mux.HandleFunc("DELETE /api/v1/simulations/{id}/closures", s.reopenRoad)
 	mux.HandleFunc("POST /api/v1/simulations/{id}/pause", s.pause)
 	mux.HandleFunc("POST /api/v1/simulations/{id}/resume", s.resume)
 	mux.HandleFunc("POST /api/v1/simulations/{id}/reset", s.reset)
@@ -284,6 +285,22 @@ func (s *Server) closeRoad(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := s.mgr.CloseRoad(r.Context(), r.PathValue("id"), req.EdgeID); err != nil {
+		writeServiceError(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusAccepted)
+}
+
+// reopenRoad takes the edge id as a query parameter rather than a body:
+// DELETE requests conventionally carry no body, and query parameters are
+// where a DELETE would put anything it needs to identify its target.
+func (s *Server) reopenRoad(w http.ResponseWriter, r *http.Request) {
+	edgeID := domain.EdgeID(r.URL.Query().Get("edgeId"))
+	if edgeID == "" {
+		writeError(w, http.StatusBadRequest, "invalid_request", "edgeId is required")
+		return
+	}
+	if err := s.mgr.ReopenRoad(r.Context(), r.PathValue("id"), edgeID); err != nil {
 		writeServiceError(w, err)
 		return
 	}

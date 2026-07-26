@@ -189,11 +189,11 @@ export function CityMap({ nodes, edges, drivers, orders, pickup, onNodeClick, on
                 y2={to.y}
                 stroke="transparent"
                 strokeWidth={14}
-                style={{ cursor: edge.closed ? "not-allowed" : "pointer" }}
+                style={{ cursor: "pointer" }}
                 onClick={() => onEdgeClick(edge.id)}
               >
                 <title>
-                  {edge.closed ? "Road closed" : `Road length ${len.toFixed(0)} — click to close`}
+                  {edge.closed ? "Road closed — click to reopen" : `Road length ${len.toFixed(0)} — click to close`}
                 </title>
               </line>
             )}

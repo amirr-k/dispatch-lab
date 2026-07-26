@@ -65,7 +65,7 @@ function App() {
     togglePaused,
     reset,
     changeSpeed,
-    closeRoad,
+    toggleRoad,
   } = useSimulation();
 
   const [pickup, setPickup] = useState<string | null>(null);
@@ -201,7 +201,7 @@ function App() {
             orders={orders}
             pickup={pickup}
             onNodeClick={handleNodeClick}
-            onEdgeClick={closeRoad}
+            onEdgeClick={toggleRoad}
           />
         </main>
 

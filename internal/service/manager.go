@@ -308,6 +308,12 @@ func (m *Manager) CloseRoad(ctx context.Context, id string, edgeID domain.EdgeID
 	return m.submit(ctx, id, simulation.CloseRoad{EdgeID: edgeID})
 }
 
+// ReopenRoad reopens a previously closed road segment for the simulation the
+// session on ctx may see.
+func (m *Manager) ReopenRoad(ctx context.Context, id string, edgeID domain.EdgeID) error {
+	return m.submit(ctx, id, simulation.ReopenRoad{EdgeID: edgeID})
+}
+
 // Snapshot returns a current-state snapshot event for a simulation the
 // session on ctx may see.
 func (m *Manager) Snapshot(ctx context.Context, id string) (domain.Event, error) {

@@ -101,6 +101,13 @@ type SetSpeed struct{ Multiplier float64 }
 // belongs to, invalidating any driver route that crosses it.
 type CloseRoad struct{ EdgeID domain.EdgeID }
 
+// ReopenRoad reopens both directions of a previously closed road segment. It
+// never needs to recalculate any route: every currently active route was
+// necessarily computed while this edge was closed (or never crossed it at
+// all), so reopening only ever adds a path a future route might use - it
+// cannot invalidate one that already exists.
+type ReopenRoad struct{ EdgeID domain.EdgeID }
+
 // envelope carries a command together with the trace it belongs to, so a
 // request's trace survives the hop onto the simulation's own goroutine.
 type envelope struct {
@@ -113,6 +120,7 @@ func (SetPaused) isCommand()  {}
 func (Reset) isCommand()      {}
 func (SetSpeed) isCommand()   {}
 func (CloseRoad) isCommand()  {}
+func (ReopenRoad) isCommand() {}
 
 // Simulation owns one simulation's state and runs its actor loop.
 type Simulation struct {
@@ -452,6 +460,8 @@ func (s *Simulation) handle(cmd Command) {
 		s.reset()
 	case CloseRoad:
 		s.handleCloseRoad(c)
+	case ReopenRoad:
+		s.handleReopenRoad(c)
 	}
 }
 
@@ -479,6 +489,30 @@ func (s *Simulation) handleCloseRoad(c CloseRoad) {
 		"to":              edge.To,
 		"affectedRoutes":  affected,
 		"recalculationMs": recalcMs,
+	})
+}
+
+// handleReopenRoad reopens both directions of a closed road segment. Unlike
+// closing, this never touches any driver's route: reopening only expands
+// what a *future* route may use, so nothing currently in flight needs
+// recalculating.
+func (s *Simulation) handleReopenRoad(c ReopenRoad) {
+	edge, ok := s.City.EdgeByID(c.EdgeID)
+	if !ok || !edge.Closed {
+		return
+	}
+
+	edgeIDs := []domain.EdgeID{edge.ID}
+	s.City.SetClosed(edge.ID, false)
+	if reverse, ok := edgeBetween(s.City, edge.To, edge.From); ok {
+		s.City.SetClosed(reverse.ID, false)
+		edgeIDs = append(edgeIDs, reverse.ID)
+	}
+
+	s.emit(domain.EventRoadReopened, map[string]any{
+		"edgeIds": edgeIDs,
+		"from":    edge.From,
+		"to":      edge.To,
 	})
 }
 
