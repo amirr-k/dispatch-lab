@@ -150,15 +150,22 @@ export function useSimulation(): SimulationState {
         case "driver.position.updated": {
           const driverId = p.driverId as string;
           const nodeId = p.nodeId as string;
+          const x = p.x as number | undefined;
+          const y = p.y as number | undefined;
           setDrivers((prev) => {
             const existing = prev[driverId];
-            // advancing routeIndex alongside position is what lets the map
-            // draw only the part of the route still ahead of the driver.
-            const routeIndex =
-              existing?.route && existing.route[(existing.routeIndex ?? 0) + 1] === nodeId
-                ? (existing.routeIndex ?? 0) + 1
-                : existing?.routeIndex;
-            return { ...prev, [driverId]: { ...existing, id: driverId, position: nodeId, routeIndex } };
+            return {
+              ...prev,
+              [driverId]: {
+                ...existing,
+                id: driverId,
+                position: nodeId,
+                x: x ?? existing?.x,
+                y: y ?? existing?.y,
+                routeIndex: (p.routeIndex as number | undefined) ?? existing?.routeIndex,
+                routeProgress: (p.routeProgress as number | undefined) ?? existing?.routeProgress,
+              },
+            };
           });
           break;
         }

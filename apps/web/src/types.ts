@@ -24,11 +24,16 @@ export interface Driver {
   id: string;
   position: string;
   status: string;
-  // route and routeIndex come from the snapshot and from route.computed;
-  // together they say which part of the path is still ahead of the driver,
-  // which is what the map draws.
+  // x and y are the interpolated screen coordinates; position is the node
+  // id the driver has most recently reached. route and routeIndex say which
+  // part of the path is still ahead, and routeProgress says how far along the
+  // current edge the driver has travelled, so the marker can sit between
+  // intersections instead of jumping from node to node.
+  x?: number;
+  y?: number;
   route?: string[];
   routeIndex?: number;
+  routeProgress?: number;
   assignedOrder?: string;
 }
 

@@ -1,30 +1,7 @@
 import { COLORS, driverColor } from "./colors";
-import { ICONS, type MapIcon } from "./icons";
+import { ICONS, type MapIcon } from "./iconSet";
+import { Glyph } from "./icons";
 import type { CityEdge, CityNode, Driver, Order } from "./types";
-
-// Glyph renders a lucide icon at a point in this SVG's own coordinate space.
-// lucide draws into a 24-unit box, so a nested <svg> is what lets it be placed
-// and scaled in city coordinates alongside the roads.
-function Glyph({ icon: Icon, x, y, size, color }: {
-  icon: MapIcon;
-  x: number;
-  y: number;
-  size: number;
-  color: string;
-}) {
-  return (
-    <Icon
-      x={x - size / 2}
-      y={y - size / 2}
-      width={size}
-      height={size}
-      color={color}
-      // the map scales to fit its pane, so a glyph this small needs a heavier
-      // stroke than lucide's default to survive being scaled down.
-      strokeWidth={2.4}
-    />
-  );
-}
 
 interface CityMapProps {
   nodes: CityNode[];
@@ -36,15 +13,11 @@ interface CityMapProps {
   onEdgeClick?: (edgeId: string) => void;
 }
 
-// how far above an intersection an order badge floats. Drivers sit on the
-// intersection itself, so without this a driver parked on a pickup hides it
-// and reads as a driver in the wrong colour.
-const BADGE_LIFT = 25;
-
 // Marker is the shared shape of everything the map places at an intersection:
 // a dark disc so the glyph reads against whatever is underneath it, a ring in
-// the thing's own colour, and the icon itself.
-function Marker({ icon, x, y, color, radius, label, halo, lift }: {
+// the thing's own colour, and the icon itself. A lift floats the badge above
+// the intersection so drivers standing on the same node do not hide it.
+function Marker({ icon, x, y, color, radius, label, halo, lift, pulse, glow, rotation }: {
   icon: MapIcon;
   x: number;
   y: number;
@@ -53,18 +26,49 @@ function Marker({ icon, x, y, color, radius, label, halo, lift }: {
   label: string;
   halo?: boolean;
   lift?: boolean;
+  pulse?: boolean;
+  glow?: boolean;
+  rotation?: number;
 }) {
   const cy = lift ? y - BADGE_LIFT : y;
   return (
-    <g>
+    <g
+      transform={rotation != null ? `rotate(${rotation * (180 / Math.PI)}, ${x}, ${cy})` : undefined}
+      filter="url(#drop)"
+    >
       <title>{label}</title>
       {lift && <line x1={x} y1={y} x2={x} y2={cy} stroke={color} strokeWidth={1.5} opacity={0.55} />}
-      {halo && <circle cx={x} cy={cy} r={radius * 1.75} fill={color} opacity={0.14} />}
+      {halo && <circle cx={x} cy={cy} r={radius * 1.8} fill={color} opacity={0.16} />}
+      {pulse && <circle cx={x} cy={cy} r={radius * 2.2} fill={color} opacity={0.3} className="pulse-ring" />}
+      {glow && <circle cx={x} cy={cy} r={radius * 2.2} fill={color} opacity={0.22} filter="url(#glow)" />}
       <circle cx={x} cy={cy} r={radius} fill={COLORS.markerFill} stroke={color} strokeWidth={2.5} />
-      <Glyph icon={icon} x={x} y={cy} size={radius * 1.5} color={color} />
+      <Glyph icon={icon} x={x} y={cy} size={radius * 2.1} color={color} />
     </g>
   );
 }
+
+// Hazard is a cartoon closed-road sign: a bright triangle with a slash.
+function Hazard({ x, y, color }: { x: number; y: number; color: string }) {
+  const size = 32;
+  return (
+    <g style={{ pointerEvents: "none" }} filter="url(#drop)">
+      <title>Road closed</title>
+      <polygon
+        points={`${x},${y - size} ${x - size * 0.9},${y + size * 0.7} ${x + size * 0.9},${y + size * 0.7}`}
+        fill={COLORS.markerFill}
+        stroke={color}
+        strokeWidth={3}
+      />
+      <text x={x} y={y + size * 0.25} textAnchor="middle" fontSize={16} fontWeight={800} fill={color}>
+        !
+      </text>
+    </g>
+  );
+}
+
+// how far above an intersection an order badge floats. Bigger badges need
+// more clearance so they don't completely cover the intersection below.
+const BADGE_LIFT = 42;
 
 export function CityMap({ nodes, edges, drivers, orders, pickup, onNodeClick, onEdgeClick }: CityMapProps) {
   const byId = new Map(nodes.map((n) => [n.id, n]));
@@ -120,6 +124,16 @@ export function CityMap({ nodes, edges, drivers, orders, pickup, onNodeClick, on
     closureMidpoints.set(key, { x: (from.x + to.x) / 2, y: (from.y + to.y) / 2 });
   }
 
+  // edge thickness hints at road length: long roads are visibly thicker,
+  // which is one of the ways the page shows that distance matters.
+  const edgeLengths = new Map(edges.map((e) => {
+    const from = byId.get(e.from);
+    const to = byId.get(e.to);
+    const len = from && to ? Math.hypot(to.x - from.x, to.y - from.y) : 0;
+    return [e.id, len] as const;
+  }));
+  const maxLen = Math.max(1, ...edgeLengths.values());
+
   return (
     <svg
       viewBox={`${minX} ${minY} ${width} ${height}`}
@@ -127,11 +141,30 @@ export function CityMap({ nodes, edges, drivers, orders, pickup, onNodeClick, on
       aria-label="City map showing drivers, orders, and roads"
       style={{ width: "100%", height: "100%", display: "block" }}
     >
+      <defs>
+        <filter id="glow" x="-50%" y="-50%" width="200%" height="200%">
+          <feGaussianBlur stdDeviation="3" result="coloredBlur" />
+          <feMerge>
+            <feMergeNode in="coloredBlur" />
+            <feMergeNode in="SourceGraphic" />
+          </feMerge>
+        </filter>
+        <filter id="drop" x="-50%" y="-50%" width="200%" height="200%">
+          <feDropShadow dx="0" dy="1" stdDeviation="2" floodColor="#000" floodOpacity="0.6" />
+        </filter>
+      </defs>
+
       {/* roads */}
       {edges.map((edge) => {
         const from = byId.get(edge.from);
         const to = byId.get(edge.to);
         if (!from || !to) return null;
+        const len = edgeLengths.get(edge.id) ?? 0;
+        // long roads are thicker and more saturated, so you can literally see
+        // distance: a main road looks heavier than a short alley.
+        const lengthRatio = len / maxLen;
+        const thickness = 2.5 + lengthRatio * 5;
+        const brightness = 0.35 + lengthRatio * 0.35;
         return (
           <g key={edge.id}>
             <line
@@ -140,9 +173,10 @@ export function CityMap({ nodes, edges, drivers, orders, pickup, onNodeClick, on
               x2={to.x}
               y2={to.y}
               stroke={edge.closed ? COLORS.closed : COLORS.road}
-              strokeWidth={edge.closed ? 5 : 3}
+              strokeWidth={edge.closed ? 5 : thickness}
               strokeLinecap="round"
               strokeDasharray={edge.closed ? "1 9" : undefined}
+              opacity={edge.closed ? 0.85 : brightness}
             />
             {onEdgeClick && (
               // invisible wide stroke: a generous click target without
@@ -158,7 +192,9 @@ export function CityMap({ nodes, edges, drivers, orders, pickup, onNodeClick, on
                 style={{ cursor: edge.closed ? "not-allowed" : "pointer" }}
                 onClick={() => onEdgeClick(edge.id)}
               >
-                <title>{edge.closed ? "Road closed" : "Click to close this road"}</title>
+                <title>
+                  {edge.closed ? "Road closed" : `Road length ${len.toFixed(0)} — click to close`}
+                </title>
               </line>
             )}
           </g>
@@ -207,20 +243,10 @@ export function CityMap({ nodes, edges, drivers, orders, pickup, onNodeClick, on
         </circle>
       ))}
 
-      {/* closed-road markers */}
-      <g style={{ pointerEvents: "none" }}>
-        {[...closureMidpoints].map(([key, point]) => (
-          <Marker
-            key={`closure-${key}`}
-            icon={ICONS.closure}
-            x={point.x}
-            y={point.y}
-            color={COLORS.closed}
-            radius={13}
-            label="Road closed"
-          />
-        ))}
-      </g>
+      {/* closed-road hazard markers */}
+      {[...closureMidpoints].map(([key, point]) => (
+        <Hazard key={`closure-${key}`} x={point.x} y={point.y} color={COLORS.closed} />
+      ))}
 
       {/* parcels waiting to be collected, and where they are headed */}
       <g style={{ pointerEvents: "none" }}>
@@ -231,7 +257,7 @@ export function CityMap({ nodes, edges, drivers, orders, pickup, onNodeClick, on
             x={node.x}
             y={node.y}
             color={COLORS.destination}
-            radius={13}
+            radius={28}
             lift
             label={`Delivery address — ${node.id}`}
           />
@@ -243,8 +269,10 @@ export function CityMap({ nodes, edges, drivers, orders, pickup, onNodeClick, on
             x={node.x}
             y={node.y}
             color={COLORS.pickup}
-            radius={13}
+            radius={26}
             lift
+            pulse={node.id === pickup}
+            glow
             label={`Parcel waiting for collection — ${node.id}`}
           />
         ))}
@@ -257,9 +285,10 @@ export function CityMap({ nodes, edges, drivers, orders, pickup, onNodeClick, on
         style={{ pointerEvents: "none" }}
       >
         {Object.values(drivers).map((driver) => {
-          const pos = byId.get(driver.position);
+          const pos = driver.x != null && driver.y != null ? { x: driver.x, y: driver.y } : byId.get(driver.position);
           if (!pos) return null;
           const busy = driver.status !== "idle";
+          const rotation = driverRotation(driver, byId);
           return (
             <Marker
               key={driver.id}
@@ -267,8 +296,9 @@ export function CityMap({ nodes, edges, drivers, orders, pickup, onNodeClick, on
               x={pos.x}
               y={pos.y}
               color={driverColor[driver.status] ?? COLORS.idle}
-              radius={busy ? 15 : 11}
+              radius={busy ? 28 : 22}
               halo={busy}
+              rotation={rotation}
               label={`${driver.id} — ${driver.status.replace(/_/g, " ")}`}
             />
           );
@@ -276,4 +306,16 @@ export function CityMap({ nodes, edges, drivers, orders, pickup, onNodeClick, on
       </g>
     </svg>
   );
+}
+
+// driverRotation points the car icon along the road it is currently on, so a
+// driver moving east looks east instead of every car facing the same direction.
+function driverRotation(driver: Driver, byId: Map<string, CityNode>): number | undefined {
+  if (!driver.route || driver.routeIndex == null || driver.routeIndex >= driver.route.length - 1) {
+    return undefined;
+  }
+  const from = byId.get(driver.route[driver.routeIndex]);
+  const to = byId.get(driver.route[driver.routeIndex + 1]);
+  if (!from || !to) return undefined;
+  return Math.atan2(to.y - from.y, to.x - from.x);
 }
