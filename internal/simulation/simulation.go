@@ -726,13 +726,30 @@ func (s *Simulation) handlePlaceOrder(cmd PlaceOrder) {
 		return
 	}
 
+	s.assignBaseline(orderID, order)
+}
+
+// assignBaseline runs nearest-idle-driver matching for one order. An order it
+// cannot place right now is queued rather than rejected, exactly as optimized
+// matching already does - without this the two strategies differ in admission
+// control as well as matching, and a comparison between them cannot attribute
+// any difference to the matching algorithm.
+func (s *Simulation) assignBaseline(orderID domain.OrderID, order *domain.Order) {
 	start := time.Now()
-	driverID, toPickup, ok := matching.Baseline(s.City, s.drivers, cmd.Pickup)
+	driverID, toPickup, ok := matching.Baseline(s.City, s.drivers, order.Pickup)
 	computeMs := telemetry.DurationMs(time.Since(start))
 	s.totalAssignmentComputeMs += computeMs
 	s.metrics.MatchLatency().Observe(computeMs)
 
-	if !ok {
+	if ok {
+		s.applyAssignment(matching.Assignment{OrderID: orderID, DriverID: driverID, ToPickup: toPickup})
+		return
+	}
+
+	// mirrors optimized's rule: a driver was free to consider and still could
+	// not reach the pickup, so nothing will ever reach it. With no free driver
+	// at all this is merely "not right now" and the order waits.
+	if s.hasIdleDriver() {
 		order.Status = domain.OrderUnassignable
 		s.emit(domain.EventOrderUnassignable, map[string]any{
 			"orderId": orderID,
@@ -740,8 +757,36 @@ func (s *Simulation) handlePlaceOrder(cmd PlaceOrder) {
 		})
 		return
 	}
+	s.pendingOrders = append(s.pendingOrders, orderID)
+}
 
-	s.applyAssignment(matching.Assignment{OrderID: orderID, DriverID: driverID, ToPickup: toPickup})
+func (s *Simulation) hasIdleDriver() bool {
+	for _, d := range s.drivers {
+		if d.Status == domain.DriverIdle {
+			return true
+		}
+	}
+	return false
+}
+
+// retryPendingBaseline re-offers queued orders once drivers free up. Orders
+// are retried in placement order so the queue stays FIFO and deterministic.
+func (s *Simulation) retryPendingBaseline() {
+	if len(s.pendingOrders) == 0 || !s.hasIdleDriver() {
+		return
+	}
+
+	queued := s.pendingOrders
+	s.pendingOrders = nil
+	for _, id := range queued {
+		order, ok := s.orders[id]
+		if !ok || order.Status != domain.OrderPending {
+			continue
+		}
+		// assignBaseline re-queues anything it still cannot place, so this
+		// rebuilds the queue in order rather than dropping the remainder.
+		s.assignBaseline(id, order)
+	}
 }
 
 // runBatch matches every currently pending order (StrategyOptimized only)
@@ -873,9 +918,16 @@ func (s *Simulation) tick() {
 		s.moveDriver(id, s.drivers[id])
 	}
 
-	if s.strategy == StrategyOptimized && s.virtualTime >= s.nextBatchAt {
-		s.runBatch()
-		s.nextBatchAt += s.batchWindow
+	// both strategies reconsider queued orders after movement, since that is
+	// when drivers become free. Baseline retries every tick because it has no
+	// batching to wait for; optimized waits for its window.
+	if s.strategy == StrategyOptimized {
+		if s.virtualTime >= s.nextBatchAt {
+			s.runBatch()
+			s.nextBatchAt += s.batchWindow
+		}
+	} else {
+		s.retryPendingBaseline()
 	}
 }
 

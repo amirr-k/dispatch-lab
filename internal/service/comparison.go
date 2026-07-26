@@ -165,9 +165,9 @@ func ScenarioFor(seed int64, drivers int, demand DemandLevel) Scenario {
 	}
 
 	return Scenario{
-		Seed:    seed,
-		Drivers: drivers,
-		Demand:  demand,
+		Seed:     seed,
+		Drivers:  drivers,
+		Demand:   demand,
 		Arrivals: arrivals,
 		// a 2-tick window is long enough for a few orders to land in a batch
 		// but short enough that the optimizer's delay does not dominate the

@@ -73,16 +73,77 @@ func TestPlaceOrderEmitsAssignmentSequence(t *testing.T) {
 	}
 }
 
-func TestPlaceOrderUnassignableWhenNoDriverIdle(t *testing.T) {
+// baseline used to reject an order the instant no driver was idle, with no
+// way to reconsider it later - a different admission policy than optimized
+// matching's queue-and-retry, which meant a comparison between the two could
+// never attribute a difference to matching alone. An order is now only ever
+// rejected outright when a genuinely idle driver could not reach it (a real
+// dead end, covered by TestPlaceOrderUnassignableWhenGenuinelyUnreachable);
+// "everyone is busy right now" queues.
+func TestPlaceOrderQueuesRatherThanRejectsWhenAllDriversBusy(t *testing.T) {
 	s := New("sim", scenarioSeed, scenarioDrivers)
 	s.Start()
 	for _, d := range s.drivers {
-		d.Status = domain.DriverUnavailable
+		d.Status = domain.DriverDelivering
 	}
 
 	evs := s.Apply(PlaceOrder{Pickup: scenarioPickup, Destination: scenarioDest})
+	if len(evs) != 1 || evs[0].Type != domain.EventOrderPlaced {
+		t.Fatalf("expected only order.placed while every driver is busy, got %v", types(evs))
+	}
+	if len(s.pendingOrders) != 1 {
+		t.Fatalf("expected the order to be queued, got pendingOrders=%v", s.pendingOrders)
+	}
+
+	// freeing a driver and re-running the tick's retry path should now place it.
+	var freed domain.DriverID
+	for id := range s.drivers {
+		freed = id
+		break
+	}
+	s.drivers[freed].Status = domain.DriverIdle
+	s.retryPendingBaseline()
+
+	if len(s.pendingOrders) != 0 {
+		t.Fatalf("expected the queue to drain once a driver freed up, got %v", s.pendingOrders)
+	}
+}
+
+// TestPlaceOrderUnassignableWhenGenuinelyUnreachable uses a minimal 3-node
+// line (a-b-c) with an isolated pickup so there is truly no path - the one
+// case where an immediate, permanent rejection is correct instead of a queue.
+func TestPlaceOrderUnassignableWhenGenuinelyUnreachable(t *testing.T) {
+	city := &domain.City{
+		Nodes: map[domain.NodeID]domain.Node{
+			"a": {ID: "a", X: 0, Y: 0},
+			"b": {ID: "b", X: 1, Y: 0},
+		},
+		Edges: map[domain.NodeID][]domain.Edge{
+			"a": nil,
+			"b": nil,
+		},
+	}
+	drivers := map[domain.DriverID]*domain.Driver{
+		"d1": {ID: "d1", Position: "a", Status: domain.DriverIdle},
+	}
+	s := &Simulation{
+		ID:       "unreachable-test",
+		City:     city,
+		drivers:  drivers,
+		orders:   make(map[domain.OrderID]*domain.Order),
+		commands: make(chan envelope, 8),
+		events:   make(chan domain.Event, 64),
+		queries:  make(chan chan domain.Event, 4),
+		speed:    1,
+	}
+	s.Start()
+
+	evs := s.Apply(PlaceOrder{Pickup: "a", Destination: "b"})
 	if len(evs) != 2 || evs[0].Type != domain.EventOrderPlaced || evs[1].Type != domain.EventOrderUnassignable {
 		t.Fatalf("expected placed+unassignable, got %v", types(evs))
+	}
+	if len(s.pendingOrders) != 0 {
+		t.Fatalf("a genuinely unreachable order must not be queued, got %v", s.pendingOrders)
 	}
 }
 
