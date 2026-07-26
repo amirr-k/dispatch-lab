@@ -8,8 +8,8 @@ Place an order, watch the system choose a driver, and close a road to make it re
 
 - Go backend (REST + WebSocket), owns all simulation, routing, and matching state
 - React, TypeScript, and Vite frontend
-- PostgreSQL for sessions, events, snapshots, and benchmark results, with an in-memory fallback for local development
-- Fly.io (backend) and GitHub Pages (frontend), deployed on every push to main via GitHub Actions
+- PostgreSQL (Neon) for sessions, events, snapshots, and benchmark results, with an in-memory fallback for local development
+- Render (backend) and GitHub Pages (frontend), deployed on every push to main via GitHub Actions
 
 ## Status
 
