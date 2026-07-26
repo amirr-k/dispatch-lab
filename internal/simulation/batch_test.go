@@ -49,16 +49,14 @@ func TestOptimizedMinBatchFiresEarly(t *testing.T) {
 	}
 }
 
-func TestOptimizedMaxWaitFiresSingleOrderBaseline(t *testing.T) {
+func TestOptimizedSingleOrderDispatchesImmediatelyWhenIdle(t *testing.T) {
 	s := newOptimizedSim("sim", scenarioSeed, scenarioDrivers, 2, 2)
 	s.Start()
 	s.Apply(PlaceOrder{Pickup: scenarioPickup, Destination: scenarioDest})
 
-	var evs []domain.Event
-	for i := 0; i < 2; i++ {
-		evs = append(evs, s.Advance()...)
-	}
-
+	// place-order only queues; the first tick should hand off immediately
+	// because an idle driver is free — no MaxWait delay.
+	evs := s.Advance()
 	var sawAssigned bool
 	for _, e := range evs {
 		if e.Type == domain.EventOrderAssigned {
@@ -66,11 +64,75 @@ func TestOptimizedMaxWaitFiresSingleOrderBaseline(t *testing.T) {
 		}
 	}
 	if !sawAssigned {
-		t.Fatalf("expected max-wait to assign the lone order, got %v", types(evs))
+		t.Fatalf("expected immediate baseline for a lone pending order with idle drivers, got %v", types(evs))
 	}
 	batch, immediate := s.DispatchCounts()
 	if batch != 0 || immediate != 1 {
 		t.Fatalf("expected 0 batch / 1 immediate, got %d / %d", batch, immediate)
+	}
+}
+
+func TestOptimizedMaxWaitBatchesPartialQueue(t *testing.T) {
+	// MinBatchSize 3 so two pending orders sit below the batch threshold
+	// until MaxWait forces a batch on whatever is queued.
+	s := newOptimizedSim("sim", scenarioSeed, scenarioDrivers, 3, 2)
+	s.Start()
+	s.Apply(PlaceOrder{Pickup: scenarioPickup, Destination: scenarioDest})
+	s.Apply(PlaceOrder{Pickup: scenarioDest, Destination: scenarioPickup})
+
+	var evs []domain.Event
+	for i := 0; i < 2; i++ {
+		evs = append(evs, s.Advance()...)
+	}
+
+	assigned := 0
+	for _, e := range evs {
+		if e.Type == domain.EventOrderAssigned {
+			assigned++
+		}
+	}
+	if assigned != 2 {
+		t.Fatalf("expected max-wait to batch the two pending orders, got %d assigned: %v", assigned, types(evs))
+	}
+	batch, immediate := s.DispatchCounts()
+	if batch != 1 || immediate != 0 {
+		t.Fatalf("expected 1 batch / 0 immediate, got %d / %d", batch, immediate)
+	}
+}
+
+func TestOptimizedMaxWaitSingleOrderWithoutIdle(t *testing.T) {
+	// one driver, first order takes it via immediate dispatch; second order
+	// arrives while the driver is busy and must wait out MaxWait (and/or
+	// until the driver frees) rather than batching alone.
+	s := newOptimizedSim("sim", scenarioSeed, 1, 2, 2)
+	s.Start()
+	s.Apply(PlaceOrder{Pickup: scenarioPickup, Destination: scenarioDest})
+	s.Advance() // immediate assign of the first order
+
+	s.Apply(PlaceOrder{Pickup: scenarioDest, Destination: scenarioPickup})
+	if len(s.pendingOrders) != 1 {
+		t.Fatalf("expected second order queued while driver is busy, got %d pending", len(s.pendingOrders))
+	}
+
+	// first tick after the second place: no idle driver, age still < MaxWait
+	s.Advance()
+	if len(s.pendingOrders) != 1 {
+		t.Fatalf("expected order still pending before max-wait with no idle driver, got %d", len(s.pendingOrders))
+	}
+
+	// age reaches MaxWait on the next tick; assignBaseline re-queues if the
+	// driver is still busy, then retries once they free — either way the
+	// order must eventually assign without needing a second order to batch.
+	assigned := 0
+	for i := 0; i < 400 && assigned < 1; i++ {
+		for _, e := range s.Advance() {
+			if e.Type == domain.EventOrderAssigned {
+				assigned++
+			}
+		}
+	}
+	if assigned != 1 {
+		t.Fatalf("expected the waiting order to assign once a driver is free, got %d", assigned)
 	}
 }
 

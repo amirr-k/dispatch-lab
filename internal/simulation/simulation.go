@@ -61,7 +61,8 @@ type Config struct {
 	// batch. Defaults to 2 if <= 0.
 	MinBatchSize int
 	// MaxWaitVirtualTime is how long the oldest pending order may wait
-	// before a single-order baseline dispatch. Defaults to 2 if <= 0.
+	// before a forced dispatch when a batch has not filled. Defaults to 2
+	// if <= 0. A lone pending order with an idle driver skips this wait.
 	MaxWaitVirtualTime float64
 	// CandidatesPerOrder bounds how many nearby drivers the spatial index
 	// returns per order for optimized matching. Defaults to 8 if <= 0.
@@ -745,9 +746,9 @@ func (s *Simulation) handlePlaceOrder(cmd PlaceOrder) {
 		"destinationNodeId": cmd.Destination,
 	})
 
-	// under optimized matching, orders wait for the next batch window
-	// instead of being assigned immediately; runBatch (called from tick)
-	// picks them up from here.
+	// under optimized matching, orders wait for the next tick's dispatch
+	// decision instead of being assigned inside PlaceOrder; runBatch /
+	// immediate baseline (called from tick) pick them up from here.
 	if s.strategy == StrategyOptimized {
 		s.pendingOrders = append(s.pendingOrders, orderID)
 		return
@@ -957,13 +958,25 @@ func (s *Simulation) tick() {
 }
 
 // dispatchOptimized chooses between a full optimized batch and a single-order
-// baseline handoff. Decisions use only virtual time and queue state.
+// baseline handoff. Decisions use only virtual time, idle drivers, and queue
+// depth — never wall clock or PlaceOrder itself.
+//
+// Policy: batch at MinBatchSize; otherwise assign a lone order immediately
+// when any driver is idle; otherwise wait up to MaxWaitVirtualTime, then
+// batch whatever is queued (or baseline a single leftover).
 func (s *Simulation) dispatchOptimized() {
-	if len(s.pendingOrders) == 0 {
+	n := len(s.pendingOrders)
+	if n == 0 {
 		return
 	}
-	if len(s.pendingOrders) >= s.minBatchSize {
+	if n >= s.minBatchSize {
 		s.runBatch()
+		return
+	}
+
+	// one pending order and an idle driver: no reason to wait for a batch.
+	if n == 1 && s.hasIdleDriver() {
+		s.dispatchImmediateBaseline()
 		return
 	}
 
@@ -977,9 +990,25 @@ func (s *Simulation) dispatchOptimized() {
 		return
 	}
 
+	if n >= 2 {
+		s.runBatch()
+		return
+	}
+	s.dispatchImmediateBaseline()
+}
+
+func (s *Simulation) dispatchImmediateBaseline() {
+	if len(s.pendingOrders) == 0 {
+		return
+	}
+	id := s.pendingOrders[0]
+	order := s.orders[id]
 	s.pendingOrders = s.pendingOrders[1:]
+	if order == nil || order.Status != domain.OrderPending {
+		return
+	}
 	s.immediateDispatchCount++
-	s.assignBaseline(oldestID, oldest)
+	s.assignBaseline(id, order)
 }
 
 // moveDriver advances a driver by driverSpeed*virtualStepPerTick along its

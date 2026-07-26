@@ -149,8 +149,8 @@ export function ComparePage() {
       <p className="compare-intro">
         Both strategies run the identical scenario — same city, same starting driver positions, same orders arriving at
         the same times — so any difference in the results comes from the assignment decision alone. Neither is
-        guaranteed to win: batch optimization helps when orders compete for the same drivers; under sparse demand it
-        may fall back to single-order dispatch after a short virtual-time wait.
+        guaranteed to win: batch optimization helps when orders compete for the same drivers, and dispatches
+        immediately when a single order has an idle driver rather than waiting out a fixed batch window.
       </p>
 
       <section className="control-panel" aria-label="Scenario controls">

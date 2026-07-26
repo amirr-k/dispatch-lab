@@ -75,13 +75,13 @@ func TestDemandLevelsProduceDifferentWorkloads(t *testing.T) {
 }
 
 // The comparison page used to assume light demand made optimized lose on
-// pickup time. Fair metrics plus adaptive max-wait change that story: the
-// gate is "no regression," not "light must lose." Under rush, optimized must
-// not regress on pickup, distance, completions, or unassigned; every cell
-// must at least match baseline on completions / unassigned / served fraction.
-// Sparse light/steady cells may still pay up to MaxWaitVirtualTime on pickup
-// when orders never fill a batch — that structural wait is not treated as an
-// algorithm regression (see plan risk note / resume wording).
+// pickup time. Fair metrics plus contention-aware dispatch change that
+// story: the gate is "no regression," not "light must lose." Under rush,
+// optimized must not regress on pickup, distance, completions, or
+// unassigned; every cell must at least match baseline on completions /
+// unassigned / served fraction. Sparse light/steady cells can still pay a
+// one-tick assign delay (optimized never decides inside PlaceOrder), so
+// avg/p95 pickup gates stay rush-scoped rather than softening the metric.
 func TestDemandDecidesWhichStrategyWins(t *testing.T) {
 	assertNoServiceRegression(t, RunComparison(ScenarioFor(42, 12, DemandLight)))
 	assertNoServiceRegression(t, RunComparison(ScenarioFor(42, 8, DemandRush)))
