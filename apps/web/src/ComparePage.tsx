@@ -15,10 +15,10 @@ interface MetricRow {
 const ROWS: MetricRow[] = [
   { label: "Completed deliveries", key: "completedDeliveries", better: "higher", format: (v) => String(v) },
   { label: "Unassigned orders", key: "unassignedOrders", better: "lower", format: (v) => String(v) },
+  { label: "Served fraction", key: "servedFraction", better: "higher", format: (v) => `${(v * 100).toFixed(1)}%` },
   { label: "Average pickup time", key: "averagePickupTime", better: "lower", format: (v) => v.toFixed(2) },
   { label: "P95 pickup time", key: "p95PickupTime", better: "lower", format: (v) => v.toFixed(2) },
   { label: "Total travel distance", key: "totalDistance", better: "lower", format: (v) => v.toFixed(1) },
-  { label: "Assignment compute time", key: "assignmentComputeMs", better: "lower", format: (v) => `${v.toFixed(3)} ms` },
 ];
 
 const DEMAND_LEVELS: {
@@ -47,6 +47,15 @@ function formatDelta(row: MetricRow, baseline: Metrics, optimized: Metrics): str
   return `${sign}${magnitude} (${sign}${Math.abs((diff / b) * 100).toFixed(1)}%)`;
 }
 
+function dispatchMix(m: Metrics): string {
+  const batch = m.batchDispatches;
+  const immediate = m.immediateDispatches;
+  if (batch === 0 && immediate === 0) return "none (baseline assigns immediately)";
+  if (batch > 0 && immediate === 0) return `batch only (${batch})`;
+  if (batch === 0 && immediate > 0) return `immediate only (${immediate})`;
+  return `mixed (${batch} batch, ${immediate} immediate)`;
+}
+
 // One plain sentence saying what actually happened, derived from the numbers
 // in the table rather than written ahead of time — neither strategy is
 // pre-declared the winner anywhere in this page.
@@ -57,6 +66,7 @@ function verdict(result: ComparisonResult): string {
   const pickupPct = b.averagePickupTime === 0 ? 0 : Math.abs((pickupDiff / b.averagePickupTime) * 100);
   const servedDiff = o.completedDeliveries - b.completedDeliveries;
   const distanceDiff = o.totalDistance - b.totalDistance;
+  const unassignedDiff = o.unassignedOrders - b.unassignedOrders;
 
   const parts: string[] = [];
 
@@ -68,8 +78,16 @@ function verdict(result: ComparisonResult): string {
     parts.push(
       `The nearest-driver baseline completed ${-servedDiff} more delivery${-servedDiff === 1 ? "" : "ies"} than batch optimization.`,
     );
+  } else if (pickupDiff === 0 && distanceDiff === 0 && unassignedDiff === 0) {
+    parts.push("Both strategies produced the same completions, pickup times, and distance.");
   } else if (pickupDiff === 0) {
     parts.push("Both strategies reached pickups equally fast on average.");
+  }
+
+  if (unassignedDiff < 0) {
+    parts.push(`It left ${-unassignedDiff} fewer order${-unassignedDiff === 1 ? "" : "s"} unassigned.`);
+  } else if (unassignedDiff > 0) {
+    parts.push(`The baseline left ${unassignedDiff} fewer order${unassignedDiff === 1 ? "" : "s"} unassigned.`);
   }
 
   if (pickupDiff < 0) {
@@ -131,8 +149,8 @@ export function ComparePage() {
       <p className="compare-intro">
         Both strategies run the identical scenario — same city, same starting driver positions, same orders arriving at
         the same times — so any difference in the results comes from the assignment decision alone. Neither is
-        guaranteed to win: batch optimization only earns back the delay of waiting for a batch when orders actually
-        compete for the same drivers.
+        guaranteed to win: batch optimization helps when orders compete for the same drivers; under sparse demand it
+        may fall back to single-order dispatch after a short virtual-time wait.
       </p>
 
       <section className="control-panel" aria-label="Scenario controls">
@@ -204,6 +222,10 @@ export function ComparePage() {
         <>
           <p className="verdict">{verdict(result)}</p>
 
+          <p className="scenario-note" data-testid="dispatch-mix">
+            Optimized dispatch mix: {dispatchMix(result.optimized)}.
+          </p>
+
           <table className="metrics-table">
             <caption className="visually-hidden">
               Measured results for the nearest-driver baseline and batch optimizer on the same scenario
@@ -236,9 +258,10 @@ export function ComparePage() {
 
           <p className="scenario-note">
             Scenario: seed {result.scenario.seed}, {result.scenario.drivers} drivers, {result.scenario.demand} demand (
-            {result.scenario.arrivals.length} orders), {result.scenario.batchWindow}-virtual-time-unit batch window.
-            Those first three inputs reproduce this table exactly — the scenario is generated from them in{" "}
-            <code>internal/service/comparison.go</code>, which is also where every metric above is computed.
+            {result.scenario.arrivals.length} orders), min batch {result.scenario.minBatchSize}, max wait{" "}
+            {result.scenario.maxWaitVirtualTime} virtual-time units. Those inputs reproduce this table exactly — the
+            scenario is generated from them in <code>internal/service/comparison.go</code>, which is also where every
+            metric above is computed.
           </p>
         </>
       )}

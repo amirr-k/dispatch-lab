@@ -11,7 +11,10 @@ test("runs an algorithm comparison and reports both strategies' measured metrics
   // default action timeout to finish and round-trip.
   await expect(page.getByRole("rowheader", { name: /Completed deliveries/ })).toBeVisible({ timeout: 15_000 });
   await expect(page.getByRole("rowheader", { name: /Unassigned orders/ })).toBeVisible();
-  await expect(page.getByRole("rowheader", { name: /Assignment compute time/ })).toBeVisible();
+  await expect(page.getByRole("rowheader", { name: /Served fraction/ })).toBeVisible();
+  await expect(page.getByRole("rowheader", { name: /Assignment compute time/ })).toHaveCount(0);
+
+  await expect(page.getByTestId("dispatch-mix")).toContainText(/Optimized dispatch mix/);
 
   // the same seed, driver count and demand level are required to reproduce
   // byte-identical metrics (Phase 4's exit gate) - the scenario summary line

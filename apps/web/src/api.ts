@@ -155,10 +155,12 @@ export interface Metrics {
   algorithm: string;
   completedDeliveries: number;
   unassignedOrders: number;
+  servedFraction: number;
   averagePickupTime: number;
   p95PickupTime: number;
   totalDistance: number;
-  assignmentComputeMs: number;
+  batchDispatches: number;
+  immediateDispatches: number;
 }
 
 export type DemandLevel = "light" | "steady" | "rush";
@@ -171,6 +173,8 @@ export interface ComparisonResult {
     demand: DemandLevel;
     arrivals: { virtualTime: number }[];
     batchWindow: number;
+    minBatchSize: number;
+    maxWaitVirtualTime: number;
     maxVirtualTime: number;
   };
   baseline: Metrics;
