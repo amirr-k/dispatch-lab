@@ -75,10 +75,15 @@ func TestCloseUnusedEdgeIsANoOp(t *testing.T) {
 	s.Start()
 	s.Apply(PlaceOrder{Pickup: scenarioPickup, Destination: scenarioDest})
 
+	// both directions count as used: closing a road shuts the edge and its
+	// reverse together, so an edge whose reverse is on an active route is
+	// not a safe "unused" candidate. Recording only the traveled direction
+	// made this test intermittently pick one and fail (~2 runs in 25).
 	used := map[[2]domain.NodeID]bool{}
 	for _, d := range s.drivers {
 		for i := 0; i < len(d.Route)-1; i++ {
 			used[[2]domain.NodeID{d.Route[i], d.Route[i+1]}] = true
+			used[[2]domain.NodeID{d.Route[i+1], d.Route[i]}] = true
 		}
 	}
 
