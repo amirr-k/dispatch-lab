@@ -31,15 +31,15 @@ type Arrival struct {
 // what makes comparison results reproducible from a checked-in scenario and
 // command, per the phase 4 exit gate.
 type Scenario struct {
-	Seed        int64                `json:"seed"`
-	Drivers     int                  `json:"drivers"`
-	Demand      DemandLevel          `json:"demand"`
-	Arrivals    []Arrival            `json:"arrivals"`
-	BatchWindow float64              `json:"batchWindow"`
+	Seed        int64       `json:"seed"`
+	Drivers     int         `json:"drivers"`
+	Demand      DemandLevel `json:"demand"`
+	Arrivals    []Arrival   `json:"arrivals"`
+	BatchWindow float64     `json:"batchWindow"`
 	// MinBatchSize / MaxWaitVirtualTime drive adaptive optimized dispatch.
 	// When unset (<=0), the simulation applies its own defaults.
-	MinBatchSize       int     `json:"minBatchSize"`
-	MaxWaitVirtualTime float64 `json:"maxWaitVirtualTime"`
+	MinBatchSize       int                  `json:"minBatchSize"`
+	MaxWaitVirtualTime float64              `json:"maxWaitVirtualTime"`
 	Weights            matching.CostWeights `json:"weights"`
 	// MaxVirtualTime bounds how long each run is simulated, guaranteeing
 	// termination even if some order can never be served; whatever's still
