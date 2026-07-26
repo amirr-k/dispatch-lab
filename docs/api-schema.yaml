@@ -443,28 +443,83 @@ components:
 
     CreateComparisonRequest:
       type: object
-      required: [seed, cityPreset, demandLevel]
+      description: >
+        Every field is optional. An omitted seed is generated randomly and
+        returned in the scenario, so any result can be reproduced exactly.
       properties:
         seed: { type: integer, format: int64 }
-        cityPreset: { type: string }
-        demandLevel: { type: string, enum: [low, medium, high] }
-        driverCount: { type: integer, minimum: 1, maximum: 200 }
+        drivers:
+          type: integer
+          minimum: 1
+          maximum: 40
+          default: 12
+          description: Clamped server-side rather than rejected.
+        demand:
+          type: string
+          enum: [light, steady, rush]
+          default: steady
+          description: >
+            How much work arrives over the run. Light spreads 12 orders thinly,
+            steady sends 20, rush sends 40 in a burst. An unrecognized value
+            falls back to steady.
 
     Comparison:
       type: object
-      required: [id, status]
+      required: [id, scenario, baseline, optimized]
       properties:
-        id: { type: string, format: uuid }
-        status: { type: string, enum: [running, completed] }
+        id: { type: string }
+        scenario: { $ref: "#/components/schemas/ComparisonScenario" }
         baseline: { $ref: "#/components/schemas/ComparisonRunResult" }
         optimized: { $ref: "#/components/schemas/ComparisonRunResult" }
+
+    ComparisonScenario:
+      type: object
+      description: >
+        The exact workload both strategies were run against. Reproducible from
+        seed, drivers and demand alone; the rest is derived from those.
+      properties:
+        seed: { type: integer, format: int64 }
+        drivers: { type: integer }
+        demand: { type: string, enum: [light, steady, rush] }
+        arrivals:
+          type: array
+          items: { $ref: "#/components/schemas/ComparisonArrival" }
+        batchWindow:
+          type: number
+          description: Virtual-time units the optimizer collects orders over before solving.
+        weights: { $ref: "#/components/schemas/CostWeights" }
+        maxVirtualTime:
+          type: number
+          description: >
+            Run cutoff, present only to guarantee termination. Anything still
+            unresolved at the cutoff counts toward unassignedOrders.
+
+    ComparisonArrival:
+      type: object
+      properties:
+        virtualTime: { type: number }
+        pickup: { type: string }
+        destination: { type: string }
+
+    CostWeights:
+      type: object
+      description: Terms the optimizer minimizes over a batch.
+      properties:
+        pickupDistance: { type: number }
+        waitTime: { type: number }
+        driverIdleTime: { type: number }
 
     ComparisonRunResult:
       type: object
       properties:
+        algorithm: { type: string, enum: [baseline, optimized] }
+        completedDeliveries: { type: integer }
+        unassignedOrders: { type: integer }
         averagePickupTime: { type: number }
         p95PickupTime: { type: number }
-        totalTravelDistance: { type: number }
-        unassignedOrders: { type: integer }
-        assignmentComputeTimeMs: { type: number }
-        completedDeliveries: { type: integer }
+        totalDistance: { type: number }
+        assignmentComputeMs:
+          type: number
+          description: >
+            Measured wall-clock time spent choosing assignments. The only
+            non-deterministic field in the response.

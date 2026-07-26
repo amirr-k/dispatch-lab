@@ -208,14 +208,15 @@ func (s *Server) getSimulation(w http.ResponseWriter, r *http.Request) {
 }
 
 type createComparisonRequest struct {
-	Seed    *int64 `json:"seed"`
-	Drivers *int   `json:"drivers"`
+	Seed    *int64  `json:"seed"`
+	Drivers *int    `json:"drivers"`
+	Demand  *string `json:"demand"`
 }
 
-// createComparison runs a fresh deterministic scenario for the given seed
-// and driver count through both matching strategies and stores the result.
-// The scenario itself is checked-in code (service.DefaultScenario), so the
-// same seed and driver count always reproduce the same comparison.
+// createComparison runs a fresh deterministic scenario for the given seed,
+// driver count and demand level through both matching strategies and stores
+// the result. The scenario itself is checked-in code (service.ScenarioFor),
+// so the same three inputs always reproduce the same comparison.
 func (s *Server) createComparison(w http.ResponseWriter, r *http.Request) {
 	var req createComparisonRequest
 	if !decode(w, r, &req) {
@@ -230,8 +231,12 @@ func (s *Server) createComparison(w http.ResponseWriter, r *http.Request) {
 	if req.Drivers != nil {
 		drivers = clamp(*req.Drivers, 1, maxDrivers)
 	}
+	demand := service.DemandSteady
+	if req.Demand != nil {
+		demand = service.NormalizeDemand(*req.Demand)
+	}
 
-	result := s.compare.Create(r.Context(), seed, drivers)
+	result := s.compare.Create(r.Context(), seed, drivers, demand)
 	writeJSON(w, http.StatusCreated, result)
 }
 

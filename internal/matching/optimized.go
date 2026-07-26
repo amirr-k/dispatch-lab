@@ -24,14 +24,14 @@ type Assignment struct {
 // trades these off against each other, per the spec's requirement.
 type CostWeights struct {
 	// PickupDistance weights routed distance from driver to pickup.
-	PickupDistance float64
+	PickupDistance float64 `json:"pickupDistance"`
 	// WaitTime rewards (lowers cost for) orders that have waited longer,
 	// so old orders aren't perpetually passed over for closer new ones.
-	WaitTime float64
+	WaitTime float64 `json:"waitTime"`
 	// DriverIdleTime rewards drivers that have been idle longer, spreading
 	// work more evenly instead of always reusing the same nearest driver -
 	// a fairness signal baseline has no notion of at all.
-	DriverIdleTime float64
+	DriverIdleTime float64 `json:"driverIdleTime"`
 }
 
 // DefaultCostWeights favors pickup distance, matching the intuitive

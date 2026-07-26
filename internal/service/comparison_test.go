@@ -29,6 +29,96 @@ func TestDefaultScenarioAppliesDriverDefault(t *testing.T) {
 	}
 }
 
+// The three demand levels have to be genuinely different workloads, not just
+// different labels: the whole reason the control exists is that contention
+// between orders is what decides whether batch optimization can beat greedy
+// nearest-driver at all.
+func TestDemandLevelsProduceDifferentWorkloads(t *testing.T) {
+	light := ScenarioFor(42, 12, DemandLight)
+	steady := ScenarioFor(42, 12, DemandSteady)
+	rush := ScenarioFor(42, 12, DemandRush)
+
+	if !(len(light.Arrivals) < len(steady.Arrivals) && len(steady.Arrivals) < len(rush.Arrivals)) {
+		t.Fatalf("expected order count to rise with demand, got %d/%d/%d",
+			len(light.Arrivals), len(steady.Arrivals), len(rush.Arrivals))
+	}
+
+	// arrival rate matters more than raw count - the same orders spread thin
+	// enough never compete for a driver.
+	rate := func(s Scenario) float64 {
+		last := s.Arrivals[len(s.Arrivals)-1].VirtualTime
+		return float64(len(s.Arrivals)) / last
+	}
+	if !(rate(light) < rate(steady) && rate(steady) < rate(rush)) {
+		t.Fatalf("expected arrival rate to rise with demand, got %.3f/%.3f/%.3f",
+			rate(light), rate(steady), rate(rush))
+	}
+
+	for _, s := range []Scenario{light, steady, rush} {
+		last := s.Arrivals[len(s.Arrivals)-1].VirtualTime
+		if s.MaxVirtualTime <= last {
+			t.Fatalf("demand %q cuts the run off at %.0f, before its last order even arrives at %.0f",
+				s.Demand, s.MaxVirtualTime, last)
+		}
+	}
+}
+
+// The trade-off the comparison page exists to show, pinned to two concrete
+// scenarios. Both are deterministic, so this cannot flake - if either
+// direction ever reverses, the claim the page makes has stopped being true
+// and the copy needs to change with it.
+func TestDemandDecidesWhichStrategyWins(t *testing.T) {
+	// spare capacity: every order gets a good driver either way, so the
+	// optimizer's batch window is pure added delay and greedy wins.
+	light := RunComparison(ScenarioFor(42, 12, DemandLight))
+	if light.Optimized.AveragePickupTime <= light.Baseline.AveragePickupTime {
+		t.Fatalf("expected batching to cost the optimizer time at light demand, got baseline %.2f vs optimized %.2f",
+			light.Baseline.AveragePickupTime, light.Optimized.AveragePickupTime)
+	}
+
+	// real contention: orders outnumber free drivers, so choosing pairings
+	// jointly beats claiming the nearest driver first-come-first-served.
+	rush := RunComparison(ScenarioFor(42, 8, DemandRush))
+	if rush.Optimized.AveragePickupTime >= rush.Baseline.AveragePickupTime {
+		t.Fatalf("expected joint assignment to win under contention, got baseline %.2f vs optimized %.2f",
+			rush.Baseline.AveragePickupTime, rush.Optimized.AveragePickupTime)
+	}
+	if rush.Optimized.UnassignedOrders > rush.Baseline.UnassignedOrders {
+		t.Fatalf("expected the optimizer to leave no more orders unserved than baseline, got %d vs %d",
+			rush.Optimized.UnassignedOrders, rush.Baseline.UnassignedOrders)
+	}
+}
+
+func TestScenarioForDeterministicPerDemandLevel(t *testing.T) {
+	for _, level := range []DemandLevel{DemandLight, DemandSteady, DemandRush} {
+		if !reflect.DeepEqual(ScenarioFor(42, 10, level), ScenarioFor(42, 10, level)) {
+			t.Fatalf("expected demand %q to reproduce an identical scenario", level)
+		}
+	}
+}
+
+func TestNormalizeDemandFallsBackToSteady(t *testing.T) {
+	for _, raw := range []string{"", "LIGHT", "extreme", "0"} {
+		if got := NormalizeDemand(raw); got != DemandSteady {
+			t.Fatalf("expected %q to normalize to steady, got %q", raw, got)
+		}
+	}
+	for _, level := range []DemandLevel{DemandLight, DemandSteady, DemandRush} {
+		if got := NormalizeDemand(string(level)); got != level {
+			t.Fatalf("expected %q to normalize to itself, got %q", level, got)
+		}
+	}
+}
+
+// DefaultScenario is what the showcase runs and every pre-demand stored
+// comparison were generated from, so it has to keep producing exactly the
+// steady workload it always did.
+func TestDefaultScenarioIsSteadyDemand(t *testing.T) {
+	if !reflect.DeepEqual(DefaultScenario(42, 10), ScenarioFor(42, 10, DemandSteady)) {
+		t.Fatal("expected DefaultScenario to stay identical to steady demand")
+	}
+}
+
 func TestRunComparisonDeterministic(t *testing.T) {
 	scenario := DefaultScenario(42, 8)
 	a := RunComparison(scenario)
@@ -105,7 +195,7 @@ func TestPercentile(t *testing.T) {
 
 func TestComparisonsCreateAndGet(t *testing.T) {
 	store := NewComparisons()
-	result := store.Create(context.Background(), 42, 10)
+	result := store.Create(context.Background(), 42, 10, DemandSteady)
 	if result.ID == "" {
 		t.Fatal("expected a generated id")
 	}

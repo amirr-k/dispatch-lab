@@ -120,6 +120,44 @@ func TestCreateComparisonDefaultsSeedAndDrivers(t *testing.T) {
 	}
 }
 
+func TestCreateComparisonHonorsDemandLevel(t *testing.T) {
+	s := newTestServer()
+	seed := int64(42)
+	drivers := 6
+
+	run := func(demand *string) service.ComparisonResult {
+		t.Helper()
+		rec := doJSON(t, s.Routes(), http.MethodPost, "/api/v1/comparisons",
+			createComparisonRequest{Seed: &seed, Drivers: &drivers, Demand: demand})
+		if rec.Code != http.StatusCreated {
+			t.Fatalf("expected 201, got %d: %s", rec.Code, rec.Body.String())
+		}
+		var result service.ComparisonResult
+		if err := json.Unmarshal(rec.Body.Bytes(), &result); err != nil {
+			t.Fatalf("decode response: %v", err)
+		}
+		return result
+	}
+
+	rush := "rush"
+	nonsense := "extreme"
+	if got := run(&rush).Scenario; got.Demand != service.DemandRush {
+		t.Fatalf("expected the requested demand level to reach the scenario, got %q", got.Demand)
+	}
+	// an unusable value must not fail the request - the visitor still gets a
+	// valid, clearly labeled run.
+	if got := run(&nonsense).Scenario; got.Demand != service.DemandSteady {
+		t.Fatalf("expected an unrecognized demand to fall back to steady, got %q", got.Demand)
+	}
+	if got := run(nil).Scenario; got.Demand != service.DemandSteady {
+		t.Fatalf("expected an omitted demand to default to steady, got %q", got.Demand)
+	}
+
+	if len(run(&rush).Scenario.Arrivals) <= len(run(nil).Scenario.Arrivals) {
+		t.Fatal("expected rush demand to place more orders than steady")
+	}
+}
+
 func TestGetComparisonReturnsStoredResult(t *testing.T) {
 	s := newTestServer()
 	created := doJSON(t, s.Routes(), http.MethodPost, "/api/v1/comparisons", createComparisonRequest{})

@@ -33,6 +33,7 @@ type Arrival struct {
 type Scenario struct {
 	Seed        int64                `json:"seed"`
 	Drivers     int                  `json:"drivers"`
+	Demand      DemandLevel          `json:"demand"`
 	Arrivals    []Arrival            `json:"arrivals"`
 	BatchWindow float64              `json:"batchWindow"`
 	Weights     matching.CostWeights `json:"weights"`
@@ -63,14 +64,62 @@ type ComparisonResult struct {
 	Optimized Metrics  `json:"optimized"`
 }
 
-// DefaultScenario deterministically generates a demand workload for a given
-// seed and driver count: a fixed number of orders arriving at fixed
+// DemandLevel selects how much work arrives over the run. It is the control
+// that decides which algorithm can win: batch optimization only beats greedy
+// nearest-driver when orders actually compete for the same drivers, and with
+// enough idle drivers to go around the two make near-identical assignments
+// while batching still pays its window delay.
+type DemandLevel string
+
+const (
+	DemandLight  DemandLevel = "light"
+	DemandSteady DemandLevel = "steady"
+	DemandRush   DemandLevel = "rush"
+)
+
+type demandShape struct {
+	orderCount      int
+	arrivalInterval float64
+	maxVirtualTime  float64
+}
+
+// the cutoff scales with the workload: it only exists to guarantee
+// termination, so it has to sit far enough past the last arrival that a run
+// is not truncated mid-delivery and scored as unassigned.
+var demandShapes = map[DemandLevel]demandShape{
+	DemandLight:  {orderCount: 12, arrivalInterval: 6, maxVirtualTime: 200},
+	DemandSteady: {orderCount: 20, arrivalInterval: 3, maxVirtualTime: 200},
+	DemandRush:   {orderCount: 40, arrivalInterval: 1, maxVirtualTime: 400},
+}
+
+// NormalizeDemand maps arbitrary input onto a known level, defaulting to
+// steady so an unset or unrecognized value still produces a valid scenario.
+func NormalizeDemand(raw string) DemandLevel {
+	level := DemandLevel(raw)
+	if _, ok := demandShapes[level]; ok {
+		return level
+	}
+	return DemandSteady
+}
+
+// DefaultScenario is ScenarioFor at steady demand, kept so existing callers
+// and stored comparisons keep reproducing exactly what they did before.
+func DefaultScenario(seed int64, drivers int) Scenario {
+	return ScenarioFor(seed, drivers, DemandSteady)
+}
+
+// ScenarioFor deterministically generates a demand workload for a given seed,
+// driver count and demand level: a fixed number of orders arriving at fixed
 // intervals, with pickup/destination pairs chosen pseudo-randomly from the
 // same seed, so the scenario (and therefore the comparison) is fully
-// reproducible from just these two numbers.
-func DefaultScenario(seed int64, drivers int) Scenario {
+// reproducible from just those three inputs.
+func ScenarioFor(seed int64, drivers int, demand DemandLevel) Scenario {
 	if drivers <= 0 {
 		drivers = 12
+	}
+	shape, ok := demandShapes[demand]
+	if !ok {
+		demand, shape = DemandSteady, demandShapes[DemandSteady]
 	}
 
 	c := city.GenerateGrid(city.DefaultGridConfig(seed))
@@ -80,27 +129,25 @@ func DefaultScenario(seed int64, drivers int) Scenario {
 	}
 	sort.Slice(nodeIDs, func(i, j int) bool { return nodeIDs[i] < nodeIDs[j] })
 
-	const orderCount = 20
-	const arrivalInterval = 3.0
-
 	rng := rand.New(rand.NewSource(seed))
-	arrivals := make([]Arrival, orderCount)
-	for i := 0; i < orderCount; i++ {
+	arrivals := make([]Arrival, shape.orderCount)
+	for i := 0; i < shape.orderCount; i++ {
 		pickup := nodeIDs[rng.Intn(len(nodeIDs))]
 		destination := nodeIDs[rng.Intn(len(nodeIDs))]
 		for destination == pickup {
 			destination = nodeIDs[rng.Intn(len(nodeIDs))]
 		}
-		arrivals[i] = Arrival{VirtualTime: float64(i) * arrivalInterval, Pickup: pickup, Destination: destination}
+		arrivals[i] = Arrival{VirtualTime: float64(i) * shape.arrivalInterval, Pickup: pickup, Destination: destination}
 	}
 
 	return Scenario{
 		Seed:           seed,
 		Drivers:        drivers,
+		Demand:         demand,
 		Arrivals:       arrivals,
 		BatchWindow:    5,
 		Weights:        matching.DefaultCostWeights(),
-		MaxVirtualTime: 200,
+		MaxVirtualTime: shape.maxVirtualTime,
 	}
 }
 
@@ -267,9 +314,9 @@ func NewComparisonsWithStore(s store.Store, metrics *telemetry.Metrics, logger *
 
 // Create runs a fresh DefaultScenario for the given seed and driver count
 // and stores the result under a generated id.
-func (c *Comparisons) Create(ctx context.Context, seed int64, drivers int) ComparisonResult {
+func (c *Comparisons) Create(ctx context.Context, seed int64, drivers int, demand DemandLevel) ComparisonResult {
 	start := time.Now()
-	result := RunComparison(DefaultScenario(seed, drivers))
+	result := RunComparison(ScenarioFor(seed, drivers, demand))
 	result.ID = generateID()
 
 	c.mu.Lock()
@@ -277,7 +324,7 @@ func (c *Comparisons) Create(ctx context.Context, seed int64, drivers int) Compa
 	c.mu.Unlock()
 
 	c.logger.Info("ran an algorithm comparison",
-		"comparison_id", result.ID, "seed", seed, "drivers", drivers,
+		"comparison_id", result.ID, "seed", seed, "drivers", drivers, "demand", string(demand),
 		"duration_ms", telemetry.DurationMs(time.Since(start)))
 
 	c.persist(ctx, result)
