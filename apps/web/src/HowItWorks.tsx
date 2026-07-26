@@ -1,3 +1,5 @@
+import { withBase } from "./basePath";
+
 // the spec is explicit that the landing page must not lead with Go,
 // WebSockets, A*, or matching terminology - all of that lives here, behind a
 // deliberate click, so the first screen stays readable to someone who does
@@ -88,7 +90,7 @@ export function HowItWorks({ open, onClose }: HowItWorksProps) {
           assignment state and streams events over a WebSocket. Routing is A*; the stronger of the two assignment
           strategies solves a batch min-cost matching over a spatially-indexed candidate set. Runs are deterministic
           from a seed, which is what makes the{" "}
-          <a href="/compare" style={{ color: "#7dd3fc" }}>
+          <a href={withBase("/compare")} style={{ color: "#7dd3fc" }}>
             algorithm comparison
           </a>{" "}
           reproducible.

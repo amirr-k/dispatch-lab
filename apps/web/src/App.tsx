@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { withBase } from "./basePath";
 import {
   AlertTriangle,
   BarChart3,
@@ -147,7 +148,7 @@ function App() {
             <HelpCircle size={14} aria-hidden />
             How it works
           </button>
-          <a href="/compare" className="nav-link">
+          <a href={withBase("/compare")} className="nav-link">
             <BarChart3 size={14} aria-hidden />
             Compare algorithms
           </a>
@@ -262,7 +263,7 @@ function App() {
 
         <div className="footer-controls">
           {replayUrl ? (
-            <a href={replayUrl} className="nav-link is-success">
+            <a href={withBase(replayUrl)} className="nav-link is-success">
               <Play size={14} aria-hidden />
               Open saved replay
             </a>

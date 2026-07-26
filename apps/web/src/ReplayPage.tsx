@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { withBase } from "./basePath";
 import { CityMap } from "./CityMap";
 import { getReplay, type ReplayLog } from "./api";
 import { emptyFrame, foldTo, type Frame } from "./replayState";
@@ -96,7 +97,7 @@ export function ReplayPage({ simulationId }: { simulationId: string }) {
           Replay · seed {log.simulation.seed} · {log.simulation.drivers} drivers
           {log.simulation.showcase ? " · saved" : ""}
         </span>
-        <a href="/" style={{ color: "#9aa4b2", marginLeft: "auto" }}>
+        <a href={withBase("/")} style={{ color: "#9aa4b2", marginLeft: "auto" }}>
           Live demo
         </a>
       </header>
@@ -159,7 +160,7 @@ function Shell({ children }: { children: React.ReactNode }) {
     <div style={{ padding: 24 }}>
       <header style={{ display: "flex", gap: 20, marginBottom: 16 }}>
         <strong>DispatchLab</strong>
-        <a href="/" style={{ color: "#9aa4b2" }}>
+        <a href={withBase("/")} style={{ color: "#9aa4b2" }}>
           Live demo
         </a>
       </header>

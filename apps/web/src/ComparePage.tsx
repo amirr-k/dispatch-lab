@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { withBase } from "./basePath";
 import { ArrowLeft, Download, FileText, Play, SignalHigh, SignalLow, SignalMedium } from "lucide-react";
 import * as api from "./api";
 import type { ComparisonResult, DemandLevel, Metrics } from "./api";
@@ -140,7 +141,7 @@ export function ComparePage() {
     <div className="compare">
       <header className="compare-header">
         <h1>Compare Algorithms</h1>
-        <a href="/" className="back-link">
+        <a href={withBase("/")} className="back-link">
           <ArrowLeft size={15} aria-hidden />
           Back to demo
         </a>
