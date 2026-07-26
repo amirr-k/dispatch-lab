@@ -1,0 +1,37 @@
+# Fly.io app config for the backend only (deploy/docker/Dockerfile). The
+# frontend deploys separately to GitHub Pages. DATABASE_URL is injected by
+# `flyctl postgres attach`, not set here - it's per-environment secret data,
+# not app config. ALLOWED_ORIGINS is set once the GitHub Pages URL is known
+# (`flyctl secrets set ALLOWED_ORIGINS=https://<user>.github.io`).
+
+app = "dispatchlab"
+primary_region = "iad"
+
+[build]
+  dockerfile = "deploy/docker/Dockerfile"
+
+[env]
+  LOG_FORMAT = "json"
+  LOG_LEVEL = "info"
+
+[http_service]
+  internal_port = 8080
+  force_https = true
+  auto_stop_machines = "stop"
+  auto_start_machines = true
+  # a demo backend with no traffic for a while can scale to zero; the next
+  # visitor's request pays a brief cold start rather than the project paying
+  # for an always-on machine nobody is using.
+  min_machines_running = 0
+  processes = ["app"]
+
+  [[http_service.checks]]
+    grace_period = "10s"
+    interval = "15s"
+    method = "GET"
+    timeout = "5s"
+    path = "/health/ready"
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "256mb"

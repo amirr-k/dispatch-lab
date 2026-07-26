@@ -165,3 +165,53 @@ jobs:
       - uses: actions/checkout@v4
       - name: build backend image
         run: docker build -f deploy/docker/Dockerfile -t dispatchlab:ci .
+
+  # both deploy jobs only run on an actual push to main - never on a pull
+  # request - and only once every verification job above has passed.
+  deploy-backend:
+    name: deploy backend (Fly.io)
+    needs: [backend, postgres-integration, e2e, container]
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: superfly/flyctl-actions/setup-flyctl@master
+      - name: flyctl deploy
+        run: flyctl deploy --remote-only
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+
+  deploy-frontend:
+    name: deploy frontend (GitHub Pages)
+    needs: [frontend, e2e]
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: apps/web/package-lock.json
+      - working-directory: apps/web
+        run: npm ci
+      # VITE_API_URL and VITE_BASE_PATH are baked in at build time - this is
+      # a static site, so there is no runtime config to swap in later.
+      - name: build with production backend URL and Pages base path
+        working-directory: apps/web
+        run: npm run build
+        env:
+          VITE_API_URL: ${{ vars.PRODUCTION_API_URL }}
+          VITE_BASE_PATH: /${{ github.event.repository.name }}/
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: apps/web/dist
+      - id: deployment
+        uses: actions/deploy-pages@v4
