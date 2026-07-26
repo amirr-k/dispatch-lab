@@ -1,0 +1,30 @@
+name: Keep production warm
+
+# Fly's free tier stops an idle standalone-Postgres machine after a period
+# of inactivity (a platform-level policy, not something this app configures
+# or controls) - and unlike the backend's own http_service, that machine has
+# no proxy-triggered auto-wake, so the next real visitor's request hits a
+# dead database and the backend crash-loops until Fly notices and restarts
+# it. A periodic real request is the standard mitigation for a free-tier
+# host that sleeps idle resources.
+on:
+  schedule:
+    - cron: "*/10 * * * *"
+  workflow_dispatch: {}
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: hit /health/ready
+        run: |
+          for i in $(seq 1 5); do
+            if curl -sf https://dispatchlab.fly.dev/health/ready; then
+              echo "backend ready"
+              exit 0
+            fi
+            echo "not ready yet, retry $i"
+            sleep 5
+          done
+          echo "backend did not become ready"
+          exit 1
