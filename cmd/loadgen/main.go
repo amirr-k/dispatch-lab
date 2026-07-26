@@ -14,6 +14,7 @@ import (
 	"log"
 	"os"
 	"os/signal"
+	"sort"
 	"sync"
 	"sync/atomic"
 	"syscall"
@@ -22,7 +23,7 @@ import (
 
 func main() {
 	addr := flag.String("addr", "http://localhost:8080", "base URL of a running dispatchlab server")
-	mode := flag.String("mode", "both", "concurrent | websocket | both")
+	mode := flag.String("mode", "both", "concurrent | websocket | reconcile | both")
 	simulations := flag.Int("simulations", 10, "number of concurrent guest visitors to simulate")
 	drivers := flag.Int("drivers", 12, "drivers per simulation")
 	duration := flag.Duration("duration", 15*time.Second, "how long to sustain load")
@@ -43,6 +44,7 @@ func main() {
 		Think       string            `json:"think"`
 		Concurrent  *concurrentReport `json:"concurrent,omitempty"`
 		WebSocket   *webSocketReport  `json:"webSocket,omitempty"`
+		Reconcile   *reconcileReport  `json:"reconcile,omitempty"`
 	}{Addr: *addr, Simulations: *simulations, Drivers: *drivers, Duration: duration.String(), Think: think.String()}
 
 	if *mode == "concurrent" || *mode == "both" {
@@ -59,19 +61,36 @@ func main() {
 		printWebSocketReport(r)
 	}
 
-	if *output != "" {
-		f, err := os.Create(*output)
-		if err != nil {
-			log.Fatalf("open output file: %v", err)
+	if *mode == "reconcile" {
+		log.Printf("running WS sequence ↔ persisted event reconcile")
+		r := runReconcile(ctx, cfg)
+		report.Reconcile = &r
+		printReconcileReport(r)
+		if !r.OK {
+			if *output != "" {
+				writeReport(*output, report)
+			}
+			os.Exit(1)
 		}
-		defer f.Close()
-		enc := json.NewEncoder(f)
-		enc.SetIndent("", "  ")
-		if err := enc.Encode(report); err != nil {
-			log.Fatalf("write report: %v", err)
-		}
-		log.Printf("wrote report to %s", *output)
 	}
+
+	if *output != "" {
+		writeReport(*output, report)
+	}
+}
+
+func writeReport(path string, report any) {
+	f, err := os.Create(path)
+	if err != nil {
+		log.Fatalf("open output file: %v", err)
+	}
+	defer f.Close()
+	enc := json.NewEncoder(f)
+	enc.SetIndent("", "  ")
+	if err := enc.Encode(report); err != nil {
+		log.Fatalf("write report: %v", err)
+	}
+	log.Printf("wrote report to %s", path)
 }
 
 type runConfig struct {
@@ -304,4 +323,128 @@ func printWebSocketReport(r webSocketReport) {
 	fmt.Printf("total events received:  %d\n", r.TotalEvents)
 	fmt.Printf("events/sec (aggregate): %.1f\n", r.EventsPerSecond)
 	fmt.Printf("events/sec (per stream):%.1f\n", r.EventsPerStreamPerSecond)
+}
+
+// reconcileReport checks that every sequenced WebSocket event eventually
+// appears as a persisted replay row with the same sequence number. This is
+// only meaningful against a Postgres-backed server — an in-memory store still
+// passes, but the point of the check is durability across the recorder flush.
+type reconcileReport struct {
+	SimulationID       string `json:"simulationId"`
+	WSSequences        int    `json:"wsSequences"`
+	PersistedSequences int    `json:"persistedSequences"`
+	MissingSequences   []int  `json:"missingSequences,omitempty"`
+	OK                 bool   `json:"ok"`
+	Error              string `json:"error,omitempty"`
+}
+
+func runReconcile(ctx context.Context, cfg runConfig) reconcileReport {
+	c := newClient(cfg.addr)
+	if _, err := c.issueSession(ctx); err != nil {
+		return reconcileReport{OK: false, Error: err.Error()}
+	}
+	simID, pickup, destination, _, err := c.createSimulation(ctx, cfg.drivers)
+	if err != nil {
+		return reconcileReport{OK: false, Error: err.Error()}
+	}
+
+	conn, err := c.dialStream(ctx, simID)
+	if err != nil {
+		return reconcileReport{SimulationID: simID, OK: false, Error: err.Error()}
+	}
+
+	seen := map[int]bool{}
+	var maxSeq int
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for {
+			_, data, err := conn.ReadMessage()
+			if err != nil {
+				return
+			}
+			var frame struct {
+				Sequence int    `json:"sequence"`
+				Type     string `json:"type"`
+			}
+			if json.Unmarshal(data, &frame) != nil {
+				continue
+			}
+			// snapshots reuse the last sequence and are not unique log rows
+			if frame.Type == "simulation.snapshot" {
+				continue
+			}
+			if frame.Sequence > 0 {
+				seen[frame.Sequence] = true
+				if frame.Sequence > maxSeq {
+					maxSeq = frame.Sequence
+				}
+			}
+		}
+	}()
+
+	deadline := time.Now().Add(cfg.duration)
+	if cfg.duration <= 0 {
+		deadline = time.Now().Add(5 * time.Second)
+	}
+	for time.Now().Before(deadline) {
+		if ctx.Err() != nil {
+			break
+		}
+		c.placeOrder(ctx, simID, pickup, destination)
+		if cfg.think > 0 {
+			time.Sleep(cfg.think)
+		} else {
+			time.Sleep(100 * time.Millisecond)
+		}
+	}
+
+	// freeze the run so the recorder is not racing new ticks, then pin and
+	// flush so the persisted log matches what the stream already saw.
+	_ = c.setPaused(ctx, simID, true)
+	time.Sleep(500 * time.Millisecond)
+	if err := c.markShowcase(ctx, simID); err != nil {
+		conn.Close()
+		<-done
+		return reconcileReport{SimulationID: simID, OK: false, Error: "showcase: " + err.Error()}
+	}
+	time.Sleep(500 * time.Millisecond)
+	conn.Close()
+	<-done
+
+	persisted, err := c.fetchReplaySequences(ctx, simID)
+	if err != nil {
+		return reconcileReport{SimulationID: simID, WSSequences: len(seen), OK: false, Error: err.Error()}
+	}
+
+	var missing []int
+	for seq := range seen {
+		if !persisted[seq] {
+			missing = append(missing, seq)
+		}
+	}
+	sort.Ints(missing)
+
+	return reconcileReport{
+		SimulationID:       simID,
+		WSSequences:        len(seen),
+		PersistedSequences: len(persisted),
+		MissingSequences:   missing,
+		OK:                 len(missing) == 0 && len(seen) > 0,
+	}
+}
+
+func printReconcileReport(r reconcileReport) {
+	fmt.Println()
+	fmt.Println("=== websocket ↔ persisted event reconcile ===")
+	fmt.Printf("simulation:            %s\n", r.SimulationID)
+	fmt.Printf("ws sequences:          %d\n", r.WSSequences)
+	fmt.Printf("persisted sequences:   %d\n", r.PersistedSequences)
+	if len(r.MissingSequences) > 0 {
+		fmt.Printf("missing sequences:     %v\n", r.MissingSequences)
+	}
+	if r.Error != "" {
+		fmt.Printf("error:                 %s\n", r.Error)
+	}
+	fmt.Printf("ok:                    %v\n", r.OK)
 }

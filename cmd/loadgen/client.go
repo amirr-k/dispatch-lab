@@ -156,6 +156,64 @@ func (c *client) dialStream(ctx context.Context, simID string) (*websocket.Conn,
 	return conn, nil
 }
 
+func (c *client) markShowcase(ctx context.Context, simID string) error {
+	resp, _, err := c.request(ctx, http.MethodPost, "/api/v1/simulations/"+simID+"/showcase", nil)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return statusError(resp)
+	}
+	io.Copy(io.Discard, resp.Body)
+	return nil
+}
+
+func (c *client) setPaused(ctx context.Context, simID string, paused bool) error {
+	path := "/api/v1/simulations/" + simID + "/resume"
+	if paused {
+		path = "/api/v1/simulations/" + simID + "/pause"
+	}
+	resp, _, err := c.request(ctx, http.MethodPost, path, nil)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusNoContent && resp.StatusCode != http.StatusAccepted {
+		return statusError(resp)
+	}
+	io.Copy(io.Discard, resp.Body)
+	return nil
+}
+
+func (c *client) fetchReplaySequences(ctx context.Context, simID string) (map[int]bool, error) {
+	resp, _, err := c.request(ctx, http.MethodGet, "/api/v1/simulations/"+simID+"/replay", nil)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, statusError(resp)
+	}
+	var log struct {
+		Events []struct {
+			Sequence int    `json:"sequence"`
+			Type     string `json:"type"`
+		} `json:"events"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&log); err != nil {
+		return nil, fmt.Errorf("decode replay: %w", err)
+	}
+	out := make(map[int]bool, len(log.Events))
+	for _, e := range log.Events {
+		if e.Type == "simulation.snapshot" {
+			continue
+		}
+		out[e.Sequence] = true
+	}
+	return out, nil
+}
+
 func statusError(resp *http.Response) error {
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
 	return fmt.Errorf("%s: %d %s", resp.Request.URL.Path, resp.StatusCode, string(body))

@@ -1,0 +1,57 @@
+{
+  "addr": "http://localhost:18080",
+  "simulations": 8,
+  "drivers": 8,
+  "duration": "8s",
+  "think": "500ms",
+  "concurrent": {
+    "sessionsIssued": 8,
+    "sessionFailures": 0,
+    "simulationsCreated": 8,
+    "simulationFailures": 0,
+    "ordersAttempted": 128,
+    "orderStatusCounts": {
+      "202": 128
+    },
+    "orderLatencySuccessful": {
+      "count": 128,
+      "min": 203625,
+      "p50": 1097208,
+      "p95": 3548167,
+      "p99": 6380500,
+      "max": 10247125
+    },
+    "sessionIssueLatency": {
+      "count": 8,
+      "min": 3107084,
+      "p50": 10167000,
+      "p95": 10289041,
+      "p99": 10289041,
+      "max": 10290125
+    },
+    "simulationCreateLatency": {
+      "count": 8,
+      "min": 1164709,
+      "p50": 3114000,
+      "p95": 4571334,
+      "p99": 4571334,
+      "max": 4923250
+    },
+    "ordersPerSecond": 16
+  },
+  "webSocket": {
+    "streamsConnected": 8,
+    "streamFailures": 0,
+    "connectLatency": {
+      "count": 8,
+      "min": 1666792,
+      "p50": 2694458,
+      "p95": 2755333,
+      "p99": 2755333,
+      "max": 3756042
+    },
+    "totalEvents": 1606,
+    "eventsPerSecond": 200.75,
+    "eventsPerStreamPerSecond": 25.09375
+  }
+}

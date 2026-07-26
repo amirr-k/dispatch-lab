@@ -1,0 +1,682 @@
+{
+  "commitSha": "3c19a86d7d622cf1a5b7454f29a31afe1a985445",
+  "goVersion": "go1.26.5",
+  "machine": "Apple M4 (darwin/arm64)",
+  "collectedAt": "2026-07-26T06:30:14Z",
+  "config": {
+    "closureSeeds": [
+      1,
+      2,
+      3,
+      5,
+      8,
+      13,
+      21,
+      34,
+      42,
+      55
+    ],
+    "closureTrials": 50,
+    "comparisonDrivers": [
+      4,
+      12
+    ],
+    "comparisonSeeds": [
+      42,
+      7,
+      99
+    ],
+    "maxWaitVirtualTime": 2,
+    "minBatchSize": 2
+  },
+  "summaryMethod": "nearest-rank percentiles over sorted samples; comparison metrics from RunComparison on the fair pickup metric (unassigned/pending scored at MaxVirtualTime-CreatedAt)",
+  "closureReroute": {
+    "unit": "ms",
+    "trials": 50,
+    "seeds": [
+      1,
+      2,
+      3,
+      5,
+      8,
+      13,
+      21,
+      34,
+      42,
+      55
+    ],
+    "raw": [
+      0.004,
+      0.004,
+      0.004,
+      0.004,
+      0.004,
+      0.005,
+      0.005,
+      0.005,
+      0.005,
+      0.005,
+      0.005,
+      0.005,
+      0.005,
+      0.005,
+      0.005,
+      0.005,
+      0.005,
+      0.005,
+      0.005,
+      0.005,
+      0.005,
+      0.005,
+      0.005,
+      0.005,
+      0.005,
+      0.005,
+      0.005,
+      0.005,
+      0.005,
+      0.006,
+      0.006,
+      0.006,
+      0.006,
+      0.006,
+      0.006,
+      0.006,
+      0.006,
+      0.006,
+      0.006,
+      0.007,
+      0.007,
+      0.008,
+      0.008,
+      0.008,
+      0.009,
+      0.009,
+      0.009,
+      0.009,
+      0.01,
+      0.048
+    ],
+    "p50": 0.005,
+    "p95": 0.009,
+    "p99": 0.048,
+    "mean": 0.006640000000000003,
+    "affectedRoutesAvg": 1
+  },
+  "comparison": {
+    "cells": [
+      {
+        "seed": 42,
+        "demand": "light",
+        "drivers": 4,
+        "baseline": {
+          "algorithm": "baseline",
+          "completedDeliveries": 12,
+          "unassignedOrders": 0,
+          "servedFraction": 1,
+          "averagePickupTime": 23.577073957023334,
+          "p95PickupTime": 38.10027258912328,
+          "totalDistance": 9418.881924362486,
+          "batchDispatches": 0,
+          "immediateDispatches": 0
+        },
+        "optimized": {
+          "algorithm": "optimized",
+          "completedDeliveries": 12,
+          "unassignedOrders": 0,
+          "servedFraction": 1,
+          "averagePickupTime": 22.679677734159217,
+          "p95PickupTime": 44.692361392601924,
+          "totalDistance": 8999.66305750325,
+          "batchDispatches": 22,
+          "immediateDispatches": 15
+        }
+      },
+      {
+        "seed": 42,
+        "demand": "light",
+        "drivers": 12,
+        "baseline": {
+          "algorithm": "baseline",
+          "completedDeliveries": 12,
+          "unassignedOrders": 0,
+          "servedFraction": 1,
+          "averagePickupTime": 5.545294506422138,
+          "p95PickupTime": 17.167463277774345,
+          "totalDistance": 5809.348089182125,
+          "batchDispatches": 0,
+          "immediateDispatches": 0
+        },
+        "optimized": {
+          "algorithm": "optimized",
+          "completedDeliveries": 12,
+          "unassignedOrders": 0,
+          "servedFraction": 1,
+          "averagePickupTime": 7.545294506422138,
+          "p95PickupTime": 19.167463277774345,
+          "totalDistance": 5809.348089182125,
+          "batchDispatches": 0,
+          "immediateDispatches": 12
+        }
+      },
+      {
+        "seed": 42,
+        "demand": "steady",
+        "drivers": 4,
+        "baseline": {
+          "algorithm": "baseline",
+          "completedDeliveries": 20,
+          "unassignedOrders": 0,
+          "servedFraction": 1,
+          "averagePickupTime": 49.51214589832362,
+          "p95PickupTime": 89.190161422133,
+          "totalDistance": 14448.482930146707,
+          "batchDispatches": 0,
+          "immediateDispatches": 0
+        },
+        "optimized": {
+          "algorithm": "optimized",
+          "completedDeliveries": 20,
+          "unassignedOrders": 0,
+          "servedFraction": 1,
+          "averagePickupTime": 36.46741131677189,
+          "p95PickupTime": 63.045216105859396,
+          "totalDistance": 12426.115639370844,
+          "batchDispatches": 89,
+          "immediateDispatches": 6
+        }
+      },
+      {
+        "seed": 42,
+        "demand": "steady",
+        "drivers": 12,
+        "baseline": {
+          "algorithm": "baseline",
+          "completedDeliveries": 20,
+          "unassignedOrders": 0,
+          "servedFraction": 1,
+          "averagePickupTime": 6.147979633100498,
+          "p95PickupTime": 15.688909619992472,
+          "totalDistance": 9791.399797535145,
+          "batchDispatches": 0,
+          "immediateDispatches": 0
+        },
+        "optimized": {
+          "algorithm": "optimized",
+          "completedDeliveries": 20,
+          "unassignedOrders": 0,
+          "servedFraction": 1,
+          "averagePickupTime": 8.147979633100498,
+          "p95PickupTime": 17.688909619992472,
+          "totalDistance": 9791.399797535145,
+          "batchDispatches": 0,
+          "immediateDispatches": 20
+        }
+      },
+      {
+        "seed": 42,
+        "demand": "rush",
+        "drivers": 4,
+        "baseline": {
+          "algorithm": "baseline",
+          "completedDeliveries": 20,
+          "unassignedOrders": 0,
+          "servedFraction": 1,
+          "averagePickupTime": 70.61044802017078,
+          "p95PickupTime": 129.02605048648127,
+          "totalDistance": 13872.633991070279,
+          "batchDispatches": 0,
+          "immediateDispatches": 0
+        },
+        "optimized": {
+          "algorithm": "optimized",
+          "completedDeliveries": 20,
+          "unassignedOrders": 0,
+          "servedFraction": 1,
+          "averagePickupTime": 42.76485854253448,
+          "p95PickupTime": 111.8586140219336,
+          "totalDistance": 10599.839252252143,
+          "batchDispatches": 92,
+          "immediateDispatches": 0
+        }
+      },
+      {
+        "seed": 42,
+        "demand": "rush",
+        "drivers": 12,
+        "baseline": {
+          "algorithm": "baseline",
+          "completedDeliveries": 24,
+          "unassignedOrders": 0,
+          "servedFraction": 1,
+          "averagePickupTime": 20.97866286721487,
+          "p95PickupTime": 45.152283036282896,
+          "totalDistance": 15224.556875277067,
+          "batchDispatches": 0,
+          "immediateDispatches": 0
+        },
+        "optimized": {
+          "algorithm": "optimized",
+          "completedDeliveries": 24,
+          "unassignedOrders": 0,
+          "servedFraction": 1,
+          "averagePickupTime": 16.511923622534947,
+          "p95PickupTime": 45.03583151115803,
+          "totalDistance": 13119.513328469111,
+          "batchDispatches": 25,
+          "immediateDispatches": 1
+        }
+      },
+      {
+        "seed": 7,
+        "demand": "light",
+        "drivers": 4,
+        "baseline": {
+          "algorithm": "baseline",
+          "completedDeliveries": 12,
+          "unassignedOrders": 0,
+          "servedFraction": 1,
+          "averagePickupTime": 12.419039819444116,
+          "p95PickupTime": 31.101235861963133,
+          "totalDistance": 7437.860728575066,
+          "batchDispatches": 0,
+          "immediateDispatches": 0
+        },
+        "optimized": {
+          "algorithm": "optimized",
+          "completedDeliveries": 12,
+          "unassignedOrders": 0,
+          "servedFraction": 1,
+          "averagePickupTime": 14.419039819444114,
+          "p95PickupTime": 33.10123586196313,
+          "totalDistance": 7437.860728575066,
+          "batchDispatches": 8,
+          "immediateDispatches": 29
+        }
+      },
+      {
+        "seed": 7,
+        "demand": "light",
+        "drivers": 12,
+        "baseline": {
+          "algorithm": "baseline",
+          "completedDeliveries": 12,
+          "unassignedOrders": 0,
+          "servedFraction": 1,
+          "averagePickupTime": 4.231092087758243,
+          "p95PickupTime": 10.998989523799352,
+          "totalDistance": 5756.476409069303,
+          "batchDispatches": 0,
+          "immediateDispatches": 0
+        },
+        "optimized": {
+          "algorithm": "optimized",
+          "completedDeliveries": 12,
+          "unassignedOrders": 0,
+          "servedFraction": 1,
+          "averagePickupTime": 6.2310920877582445,
+          "p95PickupTime": 12.998989523799352,
+          "totalDistance": 5756.476409069303,
+          "batchDispatches": 0,
+          "immediateDispatches": 12
+        }
+      },
+      {
+        "seed": 7,
+        "demand": "steady",
+        "drivers": 4,
+        "baseline": {
+          "algorithm": "baseline",
+          "completedDeliveries": 20,
+          "unassignedOrders": 0,
+          "servedFraction": 1,
+          "averagePickupTime": 52.95271810239708,
+          "p95PickupTime": 97.00912241935359,
+          "totalDistance": 15866.594011069095,
+          "batchDispatches": 0,
+          "immediateDispatches": 0
+        },
+        "optimized": {
+          "algorithm": "optimized",
+          "completedDeliveries": 20,
+          "unassignedOrders": 0,
+          "servedFraction": 1,
+          "averagePickupTime": 39.818635830495595,
+          "p95PickupTime": 80.70798514139689,
+          "totalDistance": 13949.552875118354,
+          "batchDispatches": 100,
+          "immediateDispatches": 15
+        }
+      },
+      {
+        "seed": 7,
+        "demand": "steady",
+        "drivers": 12,
+        "baseline": {
+          "algorithm": "baseline",
+          "completedDeliveries": 20,
+          "unassignedOrders": 0,
+          "servedFraction": 1,
+          "averagePickupTime": 9.978048167132297,
+          "p95PickupTime": 23.345464340770093,
+          "totalDistance": 12804.259043436705,
+          "batchDispatches": 0,
+          "immediateDispatches": 0
+        },
+        "optimized": {
+          "algorithm": "optimized",
+          "completedDeliveries": 20,
+          "unassignedOrders": 0,
+          "servedFraction": 1,
+          "averagePickupTime": 11.978048167132297,
+          "p95PickupTime": 25.345464340770093,
+          "totalDistance": 12804.259043436705,
+          "batchDispatches": 0,
+          "immediateDispatches": 20
+        }
+      },
+      {
+        "seed": 7,
+        "demand": "rush",
+        "drivers": 4,
+        "baseline": {
+          "algorithm": "baseline",
+          "completedDeliveries": 20,
+          "unassignedOrders": 0,
+          "servedFraction": 1,
+          "averagePickupTime": 81.31719393287639,
+          "p95PickupTime": 153.53568644604604,
+          "totalDistance": 16623.831926308758,
+          "batchDispatches": 0,
+          "immediateDispatches": 0
+        },
+        "optimized": {
+          "algorithm": "optimized",
+          "completedDeliveries": 20,
+          "unassignedOrders": 0,
+          "servedFraction": 1,
+          "averagePickupTime": 50.44182047313312,
+          "p95PickupTime": 117.91286146994334,
+          "totalDistance": 12361.145196437115,
+          "batchDispatches": 95,
+          "immediateDispatches": 10
+        }
+      },
+      {
+        "seed": 7,
+        "demand": "rush",
+        "drivers": 12,
+        "baseline": {
+          "algorithm": "baseline",
+          "completedDeliveries": 24,
+          "unassignedOrders": 0,
+          "servedFraction": 1,
+          "averagePickupTime": 26.92943913339739,
+          "p95PickupTime": 61.39346586923334,
+          "totalDistance": 18782.619995210232,
+          "batchDispatches": 0,
+          "immediateDispatches": 0
+        },
+        "optimized": {
+          "algorithm": "optimized",
+          "completedDeliveries": 24,
+          "unassignedOrders": 0,
+          "servedFraction": 1,
+          "averagePickupTime": 16.857512627370696,
+          "p95PickupTime": 37.70798514139689,
+          "totalDistance": 13514.464091594216,
+          "batchDispatches": 25,
+          "immediateDispatches": 0
+        }
+      },
+      {
+        "seed": 99,
+        "demand": "light",
+        "drivers": 4,
+        "baseline": {
+          "algorithm": "baseline",
+          "completedDeliveries": 12,
+          "unassignedOrders": 0,
+          "servedFraction": 1,
+          "averagePickupTime": 18.0322511510421,
+          "p95PickupTime": 35.97830347967853,
+          "totalDistance": 8663.071393550543,
+          "batchDispatches": 0,
+          "immediateDispatches": 0
+        },
+        "optimized": {
+          "algorithm": "optimized",
+          "completedDeliveries": 12,
+          "unassignedOrders": 0,
+          "servedFraction": 1,
+          "averagePickupTime": 20.56453016033871,
+          "p95PickupTime": 61.31576068656699,
+          "totalDistance": 8822.755096339526,
+          "batchDispatches": 28,
+          "immediateDispatches": 17
+        }
+      },
+      {
+        "seed": 99,
+        "demand": "light",
+        "drivers": 12,
+        "baseline": {
+          "algorithm": "baseline",
+          "completedDeliveries": 12,
+          "unassignedOrders": 0,
+          "servedFraction": 1,
+          "averagePickupTime": 4.8596304188414035,
+          "p95PickupTime": 11.42908036070525,
+          "totalDistance": 6236.285173890333,
+          "batchDispatches": 0,
+          "immediateDispatches": 0
+        },
+        "optimized": {
+          "algorithm": "optimized",
+          "completedDeliveries": 12,
+          "unassignedOrders": 0,
+          "servedFraction": 1,
+          "averagePickupTime": 6.859630418841403,
+          "p95PickupTime": 13.42908036070525,
+          "totalDistance": 6236.285173890333,
+          "batchDispatches": 0,
+          "immediateDispatches": 12
+        }
+      },
+      {
+        "seed": 99,
+        "demand": "steady",
+        "drivers": 4,
+        "baseline": {
+          "algorithm": "baseline",
+          "completedDeliveries": 20,
+          "unassignedOrders": 0,
+          "servedFraction": 1,
+          "averagePickupTime": 52.790370897143795,
+          "p95PickupTime": 103.60555155935,
+          "totalDistance": 16837.13318837501,
+          "batchDispatches": 0,
+          "immediateDispatches": 0
+        },
+        "optimized": {
+          "algorithm": "optimized",
+          "completedDeliveries": 20,
+          "unassignedOrders": 0,
+          "servedFraction": 1,
+          "averagePickupTime": 35.79988778936374,
+          "p95PickupTime": 78.57362941623254,
+          "totalDistance": 13141.891634484986,
+          "batchDispatches": 91,
+          "immediateDispatches": 12
+        }
+      },
+      {
+        "seed": 99,
+        "demand": "steady",
+        "drivers": 12,
+        "baseline": {
+          "algorithm": "baseline",
+          "completedDeliveries": 20,
+          "unassignedOrders": 0,
+          "servedFraction": 1,
+          "averagePickupTime": 8.087776320773969,
+          "p95PickupTime": 18.84329260543346,
+          "totalDistance": 12860.835900190099,
+          "batchDispatches": 0,
+          "immediateDispatches": 0
+        },
+        "optimized": {
+          "algorithm": "optimized",
+          "completedDeliveries": 20,
+          "unassignedOrders": 0,
+          "servedFraction": 1,
+          "averagePickupTime": 10.08777632077397,
+          "p95PickupTime": 20.84329260543346,
+          "totalDistance": 12860.835900190099,
+          "batchDispatches": 0,
+          "immediateDispatches": 20
+        }
+      },
+      {
+        "seed": 99,
+        "demand": "rush",
+        "drivers": 4,
+        "baseline": {
+          "algorithm": "baseline",
+          "completedDeliveries": 20,
+          "unassignedOrders": 0,
+          "servedFraction": 1,
+          "averagePickupTime": 79.01641989758896,
+          "p95PickupTime": 152.8291032454131,
+          "totalDistance": 17150.15768859759,
+          "batchDispatches": 0,
+          "immediateDispatches": 0
+        },
+        "optimized": {
+          "algorithm": "optimized",
+          "completedDeliveries": 20,
+          "unassignedOrders": 0,
+          "servedFraction": 1,
+          "averagePickupTime": 53.274875869576725,
+          "p95PickupTime": 125.61426184231125,
+          "totalDistance": 13029.385674591478,
+          "batchDispatches": 103,
+          "immediateDispatches": 3
+        }
+      },
+      {
+        "seed": 99,
+        "demand": "rush",
+        "drivers": 12,
+        "baseline": {
+          "algorithm": "baseline",
+          "completedDeliveries": 24,
+          "unassignedOrders": 0,
+          "servedFraction": 1,
+          "averagePickupTime": 22.756713556532812,
+          "p95PickupTime": 51.31664231279878,
+          "totalDistance": 16394.84694741276,
+          "batchDispatches": 0,
+          "immediateDispatches": 0
+        },
+        "optimized": {
+          "algorithm": "optimized",
+          "completedDeliveries": 24,
+          "unassignedOrders": 0,
+          "servedFraction": 1,
+          "averagePickupTime": 15.360973944679117,
+          "p95PickupTime": 42.47396448663253,
+          "totalDistance": 14107.40318030054,
+          "batchDispatches": 21,
+          "immediateDispatches": 2
+        }
+      }
+    ],
+    "note": "pickup times include MaxVirtualTime penalty for pending/unassignable orders; optimized uses adaptive min-batch/max-wait"
+  },
+  "matching": {
+    "baselineP50Ms": 1.315,
+    "baselineP95Ms": 1.586,
+    "optimizedP50Ms": 0.315,
+    "optimizedP95Ms": 0.474,
+    "shape": "40 drivers / 20 orders",
+    "trials": 40
+  },
+  "routing": {
+    "shortHopP50Us": 2,
+    "shortHopP95Us": 5,
+    "graph": "default 6x6 grid, n-0-0 \u2192 n-3-3",
+    "trials": 500
+  },
+  "simulation": {
+    "eventsPerTick": 2.88,
+    "drivers": 40,
+    "trials": 100
+  },
+  "loadgen": {
+    "addr": "http://localhost:18080",
+    "database": "postgres (DATABASE_URL=postgres://amirkiadi@localhost:5432/dispatchlab_test)",
+    "reconcile": {
+      "simulationId": "3c834a0115685172",
+      "wsSequences": 111,
+      "persistedSequences": 111,
+      "ok": true
+    },
+    "concurrent": {
+      "sessionsIssued": 8,
+      "sessionFailures": 0,
+      "simulationsCreated": 8,
+      "simulationFailures": 0,
+      "ordersAttempted": 128,
+      "orderStatusCounts": {
+        "202": 128
+      },
+      "orderLatencySuccessful": {
+        "count": 128,
+        "min": 203625,
+        "p50": 1097208,
+        "p95": 3548167,
+        "p99": 6380500,
+        "max": 10247125
+      },
+      "sessionIssueLatency": {
+        "count": 8,
+        "min": 3107084,
+        "p50": 10167000,
+        "p95": 10289041,
+        "p99": 10289041,
+        "max": 10290125
+      },
+      "simulationCreateLatency": {
+        "count": 8,
+        "min": 1164709,
+        "p50": 3114000,
+        "p95": 4571334,
+        "p99": 4571334,
+        "max": 4923250
+      },
+      "ordersPerSecond": 16
+    },
+    "webSocket": {
+      "streamsConnected": 8,
+      "streamFailures": 0,
+      "connectLatency": {
+        "count": 8,
+        "min": 1666792,
+        "p50": 2694458,
+        "p95": 2755333,
+        "p99": 2755333,
+        "max": 3756042
+      },
+      "totalEvents": 1606,
+      "eventsPerSecond": 200.75,
+      "eventsPerStreamPerSecond": 25.09375
+    },
+    "config": {
+      "simulations": 8,
+      "duration": "8s",
+      "think": "500ms",
+      "drivers": 8
+    }
+  }
+}
