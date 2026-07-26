@@ -1,13 +1,13 @@
 {
-  "addr": "http://localhost:18080",
-  "simulations": 10,
-  "drivers": 8,
-  "duration": "4s",
-  "think": "150ms",
+  "addr": "http://localhost:8080",
+  "simulations": 1,
+  "drivers": 12,
+  "duration": "10s",
+  "think": "0s",
   "reconcile": {
-    "simulationId": "3c834a0115685172",
-    "wsSequences": 111,
-    "persistedSequences": 111,
+    "simulationId": "b8116fdcc4fe9d29",
+    "wsSequences": 372,
+    "persistedSequences": 372,
     "ok": true
   }
 }

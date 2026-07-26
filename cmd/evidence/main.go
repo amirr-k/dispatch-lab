@@ -27,6 +27,8 @@ import (
 func main() {
 	outDir := flag.String("out", "benchmarks/results", "directory for latest.json and latest.md")
 	trials := flag.Int("closure-trials", 50, "road-closure recalculationMs samples")
+	loadgenReconcile := flag.String("loadgen-reconcile", "", "path to a cmd/loadgen -mode=reconcile JSON report to fold in (optional)")
+	loadgenThroughput := flag.String("loadgen-throughput", "", "path to a cmd/loadgen -mode=both/websocket JSON report to fold in (optional)")
 	flag.Parse()
 
 	commit := gitSHA()
@@ -57,6 +59,7 @@ func main() {
 	result.Matching = measureMatching()
 	result.Routing = measureRouting()
 	result.Simulation = measureSimulation()
+	result.Loadgen = loadLoadgenEvidence(*loadgenReconcile, *loadgenThroughput)
 
 	if err := os.MkdirAll(*outDir, 0o755); err != nil {
 		fatalf("mkdir: %v", err)
@@ -84,6 +87,22 @@ type Evidence struct {
 	Matching       MatchingBlock   `json:"matching"`
 	Routing        RoutingBlock    `json:"routing"`
 	Simulation     SimulationBlock `json:"simulation"`
+	// Loadgen holds whatever cmd/loadgen JSON reports were pointed at via
+	// -loadgen-reconcile / -loadgen-throughput, folded in verbatim rather
+	// than reinterpreted - this command has no server to run loadgen
+	// against on its own, so it never fabricates these numbers if the
+	// flags are omitted.
+	Loadgen *LoadgenEvidence `json:"loadgen,omitempty"`
+}
+
+// LoadgenEvidence mirrors the fields of cmd/loadgen's own report structs
+// that matter for evidence, without importing that package - cmd/loadgen is
+// a client for driving a live server, and cmd/evidence has no business
+// depending on it.
+type LoadgenEvidence struct {
+	Reconcile  json.RawMessage `json:"reconcile,omitempty"`
+	Concurrent json.RawMessage `json:"concurrent,omitempty"`
+	WebSocket  json.RawMessage `json:"webSocket,omitempty"`
 }
 
 type LatencyBlock struct {
@@ -356,6 +375,46 @@ func mean(xs []float64) float64 {
 	return sum / float64(len(xs))
 }
 
+// loadLoadgenEvidence folds in cmd/loadgen JSON reports if paths were given.
+// Both are optional and independent, since a reconcile run and a throughput
+// run are separate invocations of cmd/loadgen against a live server.
+func loadLoadgenEvidence(reconcilePath, throughputPath string) *LoadgenEvidence {
+	if reconcilePath == "" && throughputPath == "" {
+		return nil
+	}
+	out := &LoadgenEvidence{}
+	if reconcilePath != "" {
+		var report struct {
+			Reconcile json.RawMessage `json:"reconcile"`
+		}
+		if err := readJSON(reconcilePath, &report); err != nil {
+			fatalf("read loadgen reconcile report: %v", err)
+		}
+		out.Reconcile = report.Reconcile
+	}
+	if throughputPath != "" {
+		var report struct {
+			Concurrent json.RawMessage `json:"concurrent"`
+			WebSocket  json.RawMessage `json:"webSocket"`
+		}
+		if err := readJSON(throughputPath, &report); err != nil {
+			fatalf("read loadgen throughput report: %v", err)
+		}
+		out.Concurrent = report.Concurrent
+		out.WebSocket = report.WebSocket
+	}
+	return out
+}
+
+func readJSON(path string, v any) error {
+	f, err := os.Open(path)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	return json.NewDecoder(f).Decode(v)
+}
+
 func writeJSON(path string, v any) error {
 	f, err := os.Create(path)
 	if err != nil {
@@ -395,6 +454,18 @@ func renderMarkdown(e Evidence) string {
 			c.Baseline.AveragePickupTime, c.Optimized.AveragePickupTime,
 			c.Baseline.TotalDistance, c.Optimized.TotalDistance,
 			c.Optimized.BatchDispatches, c.Optimized.ImmediateDispatches)
+	}
+	if e.Loadgen != nil {
+		fmt.Fprintf(&b, "\n## Loadgen (against a live server + real PostgreSQL)\n\n")
+		if e.Loadgen.Reconcile != nil {
+			fmt.Fprintf(&b, "WS sequence ↔ persisted event reconcile: `%s`\n\n", string(e.Loadgen.Reconcile))
+		}
+		if e.Loadgen.Concurrent != nil {
+			fmt.Fprintf(&b, "Concurrent guest simulations: `%s`\n\n", string(e.Loadgen.Concurrent))
+		}
+		if e.Loadgen.WebSocket != nil {
+			fmt.Fprintf(&b, "WebSocket update throughput: `%s`\n\n", string(e.Loadgen.WebSocket))
+		}
 	}
 	return b.String()
 }

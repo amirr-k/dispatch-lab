@@ -1,8 +1,8 @@
 {
-  "commitSha": "d4c51473b45453d91462ddd5e0ec7a9d4aa2736e",
+  "commitSha": "52a1ee8c6daa2aad2a671cb7bb80206f605ff1f4",
   "goVersion": "go1.26.5",
   "machine": "Apple M4 (darwin/arm64)",
-  "collectedAt": "2026-07-26T06:32:21Z",
+  "collectedAt": "2026-07-26T21:09:05Z",
   "config": {
     "closureSeeds": [
       1,
@@ -54,6 +54,16 @@
       0.004,
       0.004,
       0.004,
+      0.004,
+      0.004,
+      0.004,
+      0.004,
+      0.004,
+      0.004,
+      0.004,
+      0.004,
+      0.004,
+      0.004,
       0.005,
       0.005,
       0.005,
@@ -69,16 +79,8 @@
       0.005,
       0.005,
       0.005,
-      0.005,
-      0.005,
-      0.005,
-      0.005,
-      0.005,
-      0.005,
-      0.005,
-      0.005,
-      0.005,
-      0.005,
+      0.006,
+      0.006,
       0.006,
       0.006,
       0.006,
@@ -89,18 +91,16 @@
       0.006,
       0.007,
       0.007,
-      0.007,
-      0.007,
-      0.007,
-      0.01,
-      0.01,
-      0.011,
-      0.028
+      0.008,
+      0.009,
+      0.009,
+      0.009,
+      0.055
     ],
     "p50": 0.005,
-    "p95": 0.01,
-    "p99": 0.028,
-    "mean": 0.005980000000000003,
+    "p95": 0.009,
+    "p99": 0.055,
+    "mean": 0.006220000000000003,
     "affectedRoutesAvg": 1
   },
   "comparison": {
@@ -125,11 +125,11 @@
           "completedDeliveries": 12,
           "unassignedOrders": 0,
           "servedFraction": 1,
-          "averagePickupTime": 22.679677734159217,
-          "p95PickupTime": 44.692361392601924,
+          "averagePickupTime": 20.679677734159217,
+          "p95PickupTime": 42.692361392601924,
           "totalDistance": 8999.66305750325,
-          "batchDispatches": 22,
-          "immediateDispatches": 15
+          "batchDispatches": 18,
+          "immediateDispatches": 17
         }
       },
       {
@@ -152,8 +152,8 @@
           "completedDeliveries": 12,
           "unassignedOrders": 0,
           "servedFraction": 1,
-          "averagePickupTime": 7.545294506422138,
-          "p95PickupTime": 19.167463277774345,
+          "averagePickupTime": 5.545294506422138,
+          "p95PickupTime": 17.167463277774345,
           "totalDistance": 5809.348089182125,
           "batchDispatches": 0,
           "immediateDispatches": 12
@@ -179,11 +179,11 @@
           "completedDeliveries": 20,
           "unassignedOrders": 0,
           "servedFraction": 1,
-          "averagePickupTime": 36.46741131677189,
-          "p95PickupTime": 63.045216105859396,
-          "totalDistance": 12426.115639370844,
-          "batchDispatches": 89,
-          "immediateDispatches": 6
+          "averagePickupTime": 34.1968052030232,
+          "p95PickupTime": 62.868191347890956,
+          "totalDistance": 12440.812582496505,
+          "batchDispatches": 86,
+          "immediateDispatches": 15
         }
       },
       {
@@ -206,8 +206,8 @@
           "completedDeliveries": 20,
           "unassignedOrders": 0,
           "servedFraction": 1,
-          "averagePickupTime": 8.147979633100498,
-          "p95PickupTime": 17.688909619992472,
+          "averagePickupTime": 6.147979633100498,
+          "p95PickupTime": 15.688909619992472,
           "totalDistance": 9791.399797535145,
           "batchDispatches": 0,
           "immediateDispatches": 20
@@ -233,11 +233,11 @@
           "completedDeliveries": 20,
           "unassignedOrders": 0,
           "servedFraction": 1,
-          "averagePickupTime": 42.76485854253448,
-          "p95PickupTime": 111.8586140219336,
-          "totalDistance": 10599.839252252143,
-          "batchDispatches": 92,
-          "immediateDispatches": 0
+          "averagePickupTime": 47.093796025879385,
+          "p95PickupTime": 95.03617318581536,
+          "totalDistance": 10464.30799392459,
+          "batchDispatches": 79,
+          "immediateDispatches": 4
         }
       },
       {
@@ -260,11 +260,11 @@
           "completedDeliveries": 24,
           "unassignedOrders": 0,
           "servedFraction": 1,
-          "averagePickupTime": 16.511923622534947,
-          "p95PickupTime": 45.03583151115803,
-          "totalDistance": 13119.513328469111,
-          "batchDispatches": 25,
-          "immediateDispatches": 1
+          "averagePickupTime": 19.69448046882161,
+          "p95PickupTime": 48.26826887026971,
+          "totalDistance": 14579.047436241111,
+          "batchDispatches": 30,
+          "immediateDispatches": 13
         }
       },
       {
@@ -287,11 +287,11 @@
           "completedDeliveries": 12,
           "unassignedOrders": 0,
           "servedFraction": 1,
-          "averagePickupTime": 14.419039819444114,
-          "p95PickupTime": 33.10123586196313,
+          "averagePickupTime": 12.419039819444116,
+          "p95PickupTime": 31.101235861963133,
           "totalDistance": 7437.860728575066,
-          "batchDispatches": 8,
-          "immediateDispatches": 29
+          "batchDispatches": 4,
+          "immediateDispatches": 25
         }
       },
       {
@@ -314,8 +314,8 @@
           "completedDeliveries": 12,
           "unassignedOrders": 0,
           "servedFraction": 1,
-          "averagePickupTime": 6.2310920877582445,
-          "p95PickupTime": 12.998989523799352,
+          "averagePickupTime": 4.231092087758243,
+          "p95PickupTime": 10.998989523799352,
           "totalDistance": 5756.476409069303,
           "batchDispatches": 0,
           "immediateDispatches": 12
@@ -341,10 +341,10 @@
           "completedDeliveries": 20,
           "unassignedOrders": 0,
           "servedFraction": 1,
-          "averagePickupTime": 39.818635830495595,
-          "p95PickupTime": 80.70798514139689,
+          "averagePickupTime": 37.818635830495595,
+          "p95PickupTime": 78.70798514139689,
           "totalDistance": 13949.552875118354,
-          "batchDispatches": 100,
+          "batchDispatches": 98,
           "immediateDispatches": 15
         }
       },
@@ -368,8 +368,8 @@
           "completedDeliveries": 20,
           "unassignedOrders": 0,
           "servedFraction": 1,
-          "averagePickupTime": 11.978048167132297,
-          "p95PickupTime": 25.345464340770093,
+          "averagePickupTime": 9.978048167132297,
+          "p95PickupTime": 23.345464340770093,
           "totalDistance": 12804.259043436705,
           "batchDispatches": 0,
           "immediateDispatches": 20
@@ -395,11 +395,11 @@
           "completedDeliveries": 20,
           "unassignedOrders": 0,
           "servedFraction": 1,
-          "averagePickupTime": 50.44182047313312,
-          "p95PickupTime": 117.91286146994334,
-          "totalDistance": 12361.145196437115,
-          "batchDispatches": 95,
-          "immediateDispatches": 10
+          "averagePickupTime": 61.908686067783535,
+          "p95PickupTime": 138.58231424728288,
+          "totalDistance": 13569.577993762314,
+          "batchDispatches": 116,
+          "immediateDispatches": 5
         }
       },
       {
@@ -422,11 +422,11 @@
           "completedDeliveries": 24,
           "unassignedOrders": 0,
           "servedFraction": 1,
-          "averagePickupTime": 16.857512627370696,
-          "p95PickupTime": 37.70798514139689,
-          "totalDistance": 13514.464091594216,
-          "batchDispatches": 25,
-          "immediateDispatches": 0
+          "averagePickupTime": 22.02144674064689,
+          "p95PickupTime": 48.06277989203464,
+          "totalDistance": 16312.82455955993,
+          "batchDispatches": 29,
+          "immediateDispatches": 18
         }
       },
       {
@@ -449,11 +449,11 @@
           "completedDeliveries": 12,
           "unassignedOrders": 0,
           "servedFraction": 1,
-          "averagePickupTime": 20.56453016033871,
-          "p95PickupTime": 61.31576068656699,
-          "totalDistance": 8822.755096339526,
-          "batchDispatches": 28,
-          "immediateDispatches": 17
+          "averagePickupTime": 18.65672428643509,
+          "p95PickupTime": 39.63228903740057,
+          "totalDistance": 8850.41333416844,
+          "batchDispatches": 25,
+          "immediateDispatches": 15
         }
       },
       {
@@ -476,8 +476,8 @@
           "completedDeliveries": 12,
           "unassignedOrders": 0,
           "servedFraction": 1,
-          "averagePickupTime": 6.859630418841403,
-          "p95PickupTime": 13.42908036070525,
+          "averagePickupTime": 4.8596304188414035,
+          "p95PickupTime": 11.42908036070525,
           "totalDistance": 6236.285173890333,
           "batchDispatches": 0,
           "immediateDispatches": 12
@@ -503,11 +503,11 @@
           "completedDeliveries": 20,
           "unassignedOrders": 0,
           "servedFraction": 1,
-          "averagePickupTime": 35.79988778936374,
-          "p95PickupTime": 78.57362941623254,
-          "totalDistance": 13141.891634484986,
-          "batchDispatches": 91,
-          "immediateDispatches": 12
+          "averagePickupTime": 33.073379556868915,
+          "p95PickupTime": 72.89560723611869,
+          "totalDistance": 13003.637518237576,
+          "batchDispatches": 87,
+          "immediateDispatches": 10
         }
       },
       {
@@ -530,8 +530,8 @@
           "completedDeliveries": 20,
           "unassignedOrders": 0,
           "servedFraction": 1,
-          "averagePickupTime": 10.08777632077397,
-          "p95PickupTime": 20.84329260543346,
+          "averagePickupTime": 8.087776320773969,
+          "p95PickupTime": 18.84329260543346,
           "totalDistance": 12860.835900190099,
           "batchDispatches": 0,
           "immediateDispatches": 20
@@ -557,11 +557,11 @@
           "completedDeliveries": 20,
           "unassignedOrders": 0,
           "servedFraction": 1,
-          "averagePickupTime": 53.274875869576725,
-          "p95PickupTime": 125.61426184231125,
-          "totalDistance": 13029.385674591478,
-          "batchDispatches": 103,
-          "immediateDispatches": 3
+          "averagePickupTime": 51.487012062228004,
+          "p95PickupTime": 112.41666277624394,
+          "totalDistance": 12535.453770917122,
+          "batchDispatches": 97,
+          "immediateDispatches": 15
         }
       },
       {
@@ -584,28 +584,28 @@
           "completedDeliveries": 24,
           "unassignedOrders": 0,
           "servedFraction": 1,
-          "averagePickupTime": 15.360973944679117,
-          "p95PickupTime": 42.47396448663253,
-          "totalDistance": 14107.40318030054,
-          "batchDispatches": 21,
-          "immediateDispatches": 2
+          "averagePickupTime": 18.56989742354163,
+          "p95PickupTime": 47.36791188756081,
+          "totalDistance": 14257.757267618043,
+          "batchDispatches": 35,
+          "immediateDispatches": 12
         }
       }
     ],
     "note": "pickup times include MaxVirtualTime penalty for pending/unassignable orders; optimized uses adaptive min-batch/max-wait"
   },
   "matching": {
-    "baselineP50Ms": 1.204,
-    "baselineP95Ms": 1.431,
-    "optimizedP50Ms": 0.294,
-    "optimizedP95Ms": 0.412,
+    "baselineP50Ms": 1.179,
+    "baselineP95Ms": 1.306,
+    "optimizedP50Ms": 1.265,
+    "optimizedP95Ms": 1.335,
     "shape": "40 drivers / 20 orders",
     "trials": 40
   },
   "routing": {
     "shortHopP50Us": 2,
     "shortHopP95Us": 3,
-    "graph": "default 6x6 grid, n-0-0 \u2192 n-3-3",
+    "graph": "default 6x6 grid, n-0-0 → n-3-3",
     "trials": 500
   },
   "simulation": {
@@ -615,9 +615,9 @@
   },
   "loadgen": {
     "reconcile": {
-      "simulationId": "3c834a0115685172",
-      "wsSequences": 111,
-      "persistedSequences": 111,
+      "simulationId": "b8116fdcc4fe9d29",
+      "wsSequences": 372,
+      "persistedSequences": 372,
       "ok": true
     },
     "concurrent": {
@@ -625,33 +625,33 @@
       "sessionFailures": 0,
       "simulationsCreated": 8,
       "simulationFailures": 0,
-      "ordersAttempted": 128,
+      "ordersAttempted": 240,
       "orderStatusCounts": {
-        "202": 128
+        "202": 240
       },
       "orderLatencySuccessful": {
-        "count": 128,
-        "min": 203625,
-        "p50": 1097208,
-        "p95": 3548167,
-        "p99": 6380500,
-        "max": 10247125
+        "count": 240,
+        "min": 207833,
+        "p50": 1935250,
+        "p95": 3230917,
+        "p99": 3663875,
+        "max": 3787500
       },
       "sessionIssueLatency": {
         "count": 8,
-        "min": 3107084,
-        "p50": 10167000,
-        "p95": 10289041,
-        "p99": 10289041,
-        "max": 10290125
+        "min": 5331708,
+        "p50": 14182416,
+        "p95": 14809833,
+        "p99": 14809833,
+        "max": 17952584
       },
       "simulationCreateLatency": {
         "count": 8,
-        "min": 1164709,
-        "p50": 3114000,
-        "p95": 4571334,
-        "p99": 4571334,
-        "max": 4923250
+        "min": 5237750,
+        "p50": 6244417,
+        "p95": 7651583,
+        "p99": 7651583,
+        "max": 9137000
       },
       "ordersPerSecond": 16
     },
@@ -660,23 +660,15 @@
       "streamFailures": 0,
       "connectLatency": {
         "count": 8,
-        "min": 1666792,
-        "p50": 2694458,
-        "p95": 2755333,
-        "p99": 2755333,
-        "max": 3756042
+        "min": 1842500,
+        "p50": 2323083,
+        "p95": 8090792,
+        "p99": 8090792,
+        "max": 8143292
       },
-      "totalEvents": 1606,
-      "eventsPerSecond": 200.75,
-      "eventsPerStreamPerSecond": 25.09375
-    },
-    "addr": "http://localhost:18080",
-    "database": "postgres (DATABASE_URL=postgres://amirkiadi@localhost:5432/dispatchlab_test)",
-    "config": {
-      "simulations": 8,
-      "duration": "8s",
-      "think": "500ms",
-      "drivers": 8
+      "totalEvents": 3900,
+      "eventsPerSecond": 260,
+      "eventsPerStreamPerSecond": 32.5
     }
   }
 }

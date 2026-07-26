@@ -1,41 +1,41 @@
 {
-  "addr": "http://localhost:18080",
+  "addr": "http://localhost:8080",
   "simulations": 8,
-  "drivers": 8,
-  "duration": "8s",
+  "drivers": 12,
+  "duration": "15s",
   "think": "500ms",
   "concurrent": {
     "sessionsIssued": 8,
     "sessionFailures": 0,
     "simulationsCreated": 8,
     "simulationFailures": 0,
-    "ordersAttempted": 128,
+    "ordersAttempted": 240,
     "orderStatusCounts": {
-      "202": 128
+      "202": 240
     },
     "orderLatencySuccessful": {
-      "count": 128,
-      "min": 203625,
-      "p50": 1097208,
-      "p95": 3548167,
-      "p99": 6380500,
-      "max": 10247125
+      "count": 240,
+      "min": 207833,
+      "p50": 1935250,
+      "p95": 3230917,
+      "p99": 3663875,
+      "max": 3787500
     },
     "sessionIssueLatency": {
       "count": 8,
-      "min": 3107084,
-      "p50": 10167000,
-      "p95": 10289041,
-      "p99": 10289041,
-      "max": 10290125
+      "min": 5331708,
+      "p50": 14182416,
+      "p95": 14809833,
+      "p99": 14809833,
+      "max": 17952584
     },
     "simulationCreateLatency": {
       "count": 8,
-      "min": 1164709,
-      "p50": 3114000,
-      "p95": 4571334,
-      "p99": 4571334,
-      "max": 4923250
+      "min": 5237750,
+      "p50": 6244417,
+      "p95": 7651583,
+      "p99": 7651583,
+      "max": 9137000
     },
     "ordersPerSecond": 16
   },
@@ -44,14 +44,14 @@
     "streamFailures": 0,
     "connectLatency": {
       "count": 8,
-      "min": 1666792,
-      "p50": 2694458,
-      "p95": 2755333,
-      "p99": 2755333,
-      "max": 3756042
+      "min": 1842500,
+      "p50": 2323083,
+      "p95": 8090792,
+      "p99": 8090792,
+      "max": 8143292
     },
-    "totalEvents": 1606,
-    "eventsPerSecond": 200.75,
-    "eventsPerStreamPerSecond": 25.09375
+    "totalEvents": 3900,
+    "eventsPerSecond": 260,
+    "eventsPerStreamPerSecond": 32.5
   }
 }
