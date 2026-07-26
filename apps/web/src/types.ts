@@ -24,6 +24,20 @@ export interface Driver {
   id: string;
   position: string;
   status: string;
+  // route and routeIndex come from the snapshot and from route.computed;
+  // together they say which part of the path is still ahead of the driver,
+  // which is what the map draws.
+  route?: string[];
+  routeIndex?: number;
+  assignedOrder?: string;
+}
+
+export interface Order {
+  id: string;
+  pickup: string;
+  destination: string;
+  status: string;
+  assignedDriver?: string;
 }
 
 export interface Assignment {

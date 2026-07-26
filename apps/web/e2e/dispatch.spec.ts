@@ -37,18 +37,18 @@ test("landing, place an order, observe assignment, close a road, observe reroute
     // assignment. The far corner destination means several seconds of
     // travel, which is the window the next two steps act inside.
     await page.locator("#node-n-0-0").click();
-    await expect(page.getByText(/Pickup selected: n-0-0/)).toBeVisible();
+    await expect(page.getByText(/Pickup set at n-0-0/)).toBeVisible();
     await page.locator("#node-n-5-5").click();
   });
 
   await test.step("observe the assignment", async () => {
-    // the assignment card (an exact "Driver X assigned" line) and the event
-    // feed (a separate "Driver X assigned to order-Y" line) both mention
-    // the assignment - check each specifically instead of one loose regex
-    // that matches both.
-    await expect(page.getByText(/^Driver .+ assigned$/)).toBeVisible({ timeout: 10_000 });
-    await expect(page.getByText(/Order .+ placed/)).toBeVisible();
-    await expect(page.getByText(/assigned to/)).toBeVisible();
+    // the assignment card names the driver and its pickup figures; the
+    // activity feed reports the same assignment as a sentence. Both are
+    // checked because they are populated by different code paths.
+    await expect(page.getByText("Latest assignment")).toBeVisible();
+    await expect(page.getByText(/assigned to the order/)).toBeVisible({ timeout: 10_000 });
+    await expect(page.getByText(/Order placed/)).toBeVisible();
+    await expect(page.getByText("Distance to pickup")).toBeVisible();
   });
 
   const targetEdgeId = await test.step("find the edge the assigned driver is about to cross", async () => {
@@ -89,15 +89,15 @@ test("landing, place an order, observe assignment, close a road, observe reroute
     // this is a real click landing on real overlapping geometry, not a
     // broken locator.
     await page.locator(`#edge-${targetEdgeId}`).click({ force: true });
-    await expect(page.locator(`#edge-${targetEdgeId} title`)).toHaveText("Closed");
+    await expect(page.locator(`#edge-${targetEdgeId} title`)).toHaveText("Road closed");
   });
 
   await test.step("observe the reroute", async () => {
-    await expect(page.getByText(/Road closed/)).toBeVisible({ timeout: 5_000 });
-    // the closed edge was on the driver's active route, so the backend
-    // must invalidate and recompute it - not merely note the closure
-    // happened.
-    await expect(page.getByText(/Route invalidated for driver/)).toBeVisible({ timeout: 5_000 });
+    // the closed edge was on the driver's active route, so the count in
+    // this line has to be non-zero: it is the backend reporting that it
+    // actually invalidated and recomputed a route, not merely that a
+    // closure was recorded.
+    await expect(page.getByText(/Road closed.*[1-9]\d* routes? recalculated/)).toBeVisible({ timeout: 5_000 });
   });
 
   const replayHref = await test.step("save the replay", async () => {

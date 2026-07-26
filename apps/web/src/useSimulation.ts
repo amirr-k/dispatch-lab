@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import * as api from "./api";
-import type { Assignment, CityEdge, CityNode, Driver, EventEnvelope } from "./types";
+import type { Assignment, CityEdge, CityNode, Driver, EventEnvelope, Order } from "./types";
 
 const MAX_FEED_LENGTH = 30;
 const SESSION_KEY = "dispatchlab.simulationId";
@@ -15,14 +15,21 @@ export interface Metrics {
   virtualTime: number;
 }
 
+export interface FeedEntry {
+  id: number;
+  text: string;
+  kind: "order" | "assign" | "deliver" | "closure" | "system";
+}
+
 export interface SimulationState {
   simulationId: string | null;
   connected: boolean;
   nodes: CityNode[];
   edges: CityEdge[];
   drivers: Record<string, Driver>;
+  orders: Record<string, Order>;
   assignment: Assignment | null;
-  feed: string[];
+  feed: FeedEntry[];
   metrics: Metrics;
   paused: boolean;
   speed: number;
@@ -34,35 +41,49 @@ export interface SimulationState {
   closeRoad: (edgeId: string) => Promise<void>;
 }
 
-function describe(event: EventEnvelope): string {
+// describe turns an event into a sentence a non-technical visitor can read.
+// Events with no plain-language form return null and never reach the feed -
+// a raw "driver.status.changed" in a visitor-facing activity list is noise,
+// not information.
+function describe(event: EventEnvelope): FeedEntry | null {
   const p = event.payload;
+  const entry = (text: string, kind: FeedEntry["kind"]): FeedEntry => ({ id: event.sequence, text, kind });
+
   switch (event.type) {
     case "order.placed":
-      return `Order ${p.orderId} placed`;
+      return entry(`Order placed — pickup at ${p.pickupNodeId}`, "order");
     case "order.assigned":
-      return `Driver ${p.driverId} assigned to ${p.orderId}`;
+      return entry(`${driverLabel(p.driverId as string)} assigned to the order`, "assign");
     case "order.unassignable":
-      return `Order ${p.orderId} could not be assigned: ${p.reason}`;
+      return entry(`No driver could reach that order (${p.reason})`, "system");
     case "order.delivered":
-      return `Order ${p.orderId} delivered`;
+      return entry(`Delivered by ${driverLabel(p.driverId as string)}`, "deliver");
     case "road.closed": {
       const routes = p.affectedRoutes as number;
-      const ms = (p.recalculationMs as number).toFixed(2);
+      const ms = (p.recalculationMs as number).toFixed(1);
       return routes > 0
-        ? `Road closed — ${routes} active route(s) recalculated in ${ms}ms`
-        : `Road ${p.from} → ${p.to} closed`;
+        ? entry(`Road closed — ${routes} route${routes === 1 ? "" : "s"} recalculated in ${ms}ms`, "closure")
+        : entry(`Road closed — no active routes were using it`, "closure");
     }
     case "road.reopened":
-      return `Road ${p.from} → ${p.to} reopened`;
-    case "route.invalidated":
-      return `Route invalidated for driver ${p.driverId}`;
+      return entry(`Road reopened`, "closure");
     case "simulation.paused":
-      return p.paused ? "Simulation paused" : "Simulation resumed";
+      return entry(p.paused ? "Paused" : "Resumed", "system");
     case "simulation.speed.changed":
-      return `Speed set to ${p.multiplier}x`;
+      return entry(`Speed set to ${p.multiplier}x`, "system");
     default:
-      return event.type;
+      // route.computed, route.invalidated, driver.position.updated and
+      // driver.status.changed are all visible on the map itself; repeating
+      // them as text adds nothing a visitor can act on.
+      return null;
   }
+}
+
+// driverLabel turns "driver-7" into "Driver 7" - the id is an implementation
+// detail, the number is what a person reads off the map.
+export function driverLabel(id: string): string {
+  const n = id.replace(/^driver-/, "");
+  return `Driver ${n}`;
 }
 
 // resolveSession finds a simulation to join: reuse a previously created one
@@ -91,8 +112,9 @@ export function useSimulation(): SimulationState {
   const [nodes, setNodes] = useState<CityNode[]>([]);
   const [edges, setEdges] = useState<CityEdge[]>([]);
   const [drivers, setDrivers] = useState<Record<string, Driver>>({});
+  const [orders, setOrders] = useState<Record<string, Order>>({});
   const [assignment, setAssignment] = useState<Assignment | null>(null);
-  const [feed, setFeed] = useState<string[]>([]);
+  const [feed, setFeed] = useState<FeedEntry[]>([]);
   const [metrics, setMetrics] = useState<Metrics>({ pending: 0, delivered: 0, unassignable: 0, virtualTime: 0 });
   const [paused, setPaused] = useState(false);
   const [speed, setSpeedState] = useState(1);
@@ -118,6 +140,9 @@ export function useSimulation(): SimulationState {
           const byId: Record<string, Driver> = {};
           for (const d of p.drivers as Driver[]) byId[d.id] = d;
           setDrivers(byId);
+          const orderById: Record<string, Order> = {};
+          for (const o of (p.orders as Order[]) ?? []) orderById[o.id] = o;
+          setOrders(orderById);
           setPaused(p.paused as boolean);
           setSpeedState(p.speed as number);
           return; // hydration only: not a feed-worthy event
@@ -125,10 +150,29 @@ export function useSimulation(): SimulationState {
         case "driver.position.updated": {
           const driverId = p.driverId as string;
           const nodeId = p.nodeId as string;
+          setDrivers((prev) => {
+            const existing = prev[driverId];
+            // advancing routeIndex alongside position is what lets the map
+            // draw only the part of the route still ahead of the driver.
+            const routeIndex =
+              existing?.route && existing.route[(existing.routeIndex ?? 0) + 1] === nodeId
+                ? (existing.routeIndex ?? 0) + 1
+                : existing?.routeIndex;
+            return { ...prev, [driverId]: { ...existing, id: driverId, position: nodeId, routeIndex } };
+          });
+          break;
+        }
+        case "route.computed": {
+          const driverId = p.driverId as string;
           setDrivers((prev) => ({
             ...prev,
-            [driverId]: { ...prev[driverId], id: driverId, position: nodeId },
+            [driverId]: { ...prev[driverId], id: driverId, route: p.nodeIds as string[], routeIndex: 0 },
           }));
+          break;
+        }
+        case "route.invalidated": {
+          const driverId = p.driverId as string;
+          setDrivers((prev) => ({ ...prev, [driverId]: { ...prev[driverId], id: driverId, route: undefined } }));
           break;
         }
         case "driver.status.changed": {
@@ -136,20 +180,52 @@ export function useSimulation(): SimulationState {
           const status = p.status as string;
           setDrivers((prev) => ({
             ...prev,
-            [driverId]: { ...prev[driverId], id: driverId, status },
+            [driverId]: {
+              ...prev[driverId],
+              id: driverId,
+              status,
+              // an idle driver has nothing left to draw
+              route: status === "idle" ? undefined : prev[driverId]?.route,
+            },
           }));
           break;
         }
         case "order.placed":
+          setOrders((prev) => ({
+            ...prev,
+            [p.orderId as string]: {
+              id: p.orderId as string,
+              pickup: p.pickupNodeId as string,
+              destination: p.destinationNodeId as string,
+              status: "pending",
+            },
+          }));
           setMetrics((prev) => ({ ...prev, pending: prev.pending + 1 }));
           break;
         case "order.assigned":
           setAssignment(p as unknown as Assignment);
+          setOrders((prev) => ({
+            ...prev,
+            [p.orderId as string]: {
+              ...prev[p.orderId as string],
+              status: "assigned",
+              assignedDriver: p.driverId as string,
+            },
+          }));
           break;
         case "order.unassignable":
+          setOrders((prev) => ({
+            ...prev,
+            [p.orderId as string]: { ...prev[p.orderId as string], status: "unassignable" },
+          }));
           setMetrics((prev) => ({ ...prev, pending: prev.pending - 1, unassignable: prev.unassignable + 1 }));
           break;
         case "order.delivered":
+          setOrders((prev) => {
+            const next = { ...prev };
+            delete next[p.orderId as string];
+            return next;
+          });
           setMetrics((prev) => ({ ...prev, pending: prev.pending - 1, delivered: prev.delivered + 1 }));
           break;
         case "simulation.paused":
@@ -167,7 +243,8 @@ export function useSimulation(): SimulationState {
         }
       }
 
-      setFeed((prev) => [describe(event), ...prev].slice(0, MAX_FEED_LENGTH));
+      const described = describe(event);
+      if (described) setFeed((prev) => [described, ...prev].slice(0, MAX_FEED_LENGTH));
     }
 
     function connect(id: string) {
@@ -230,6 +307,8 @@ export function useSimulation(): SimulationState {
         await api.resetSimulation(id);
         setMetrics((prev) => ({ ...prev, pending: 0, delivered: 0, unassignable: 0 }));
         setAssignment(null);
+        setOrders({});
+        setFeed([]);
       }),
     [runAction],
   );
@@ -253,6 +332,7 @@ export function useSimulation(): SimulationState {
     nodes,
     edges,
     drivers,
+    orders,
     assignment,
     feed,
     metrics,

@@ -30,7 +30,7 @@ test("a replay page has no serious or critical accessibility violations", async 
   await page.goto("/");
   await page.locator("#node-n-0-0").click();
   await page.locator("#node-n-1-1").click();
-  await expect(page.getByText(/^Driver .+ assigned$/)).toBeVisible({ timeout: 10_000 });
+  await expect(page.getByText(/assigned to the order/)).toBeVisible({ timeout: 10_000 });
 
   await page.getByRole("button", { name: "Save replay" }).click();
   const link = page.getByRole("link", { name: "Open saved replay" });

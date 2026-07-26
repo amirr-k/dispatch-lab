@@ -21,9 +21,9 @@ test("the live demo renders and is usable at a mobile viewport with no horizonta
 
   // placing an order has to work with touch taps, not just mouse clicks.
   await page.locator("#node-n-0-0").tap();
-  await expect(page.getByText(/Pickup selected: n-0-0/)).toBeVisible();
+  await expect(page.getByText(/Pickup set at n-0-0/)).toBeVisible();
   await page.locator("#node-n-1-1").tap();
-  await expect(page.getByText(/^Driver .+ assigned$/)).toBeVisible({ timeout: 10_000 });
+  await expect(page.getByText(/assigned to the order/)).toBeVisible({ timeout: 10_000 });
 });
 
 test("the compare page is usable at a mobile viewport", async ({ page }) => {

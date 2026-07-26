@@ -12,3 +12,100 @@ body {
 #root {
   min-height: 100vh;
 }
+
+/* Layout lives here rather than in inline styles because it needs media
+   queries: on a phone the sidebar has to move below the map instead of
+   beside it, and the whole page has to start scrolling instead of pinning
+   to the viewport. */
+.app {
+  display: flex;
+  flex-direction: column;
+  height: 100dvh;
+  overflow: hidden;
+}
+
+.app-body {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+}
+
+.map-pane {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  padding: 10px 14px;
+}
+
+.sidebar {
+  width: 330px;
+  flex-shrink: 0;
+  border-left: 1px solid #242a38;
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  overflow-y: auto;
+}
+
+@media (max-width: 900px) {
+  .app {
+    height: auto;
+    min-height: 100dvh;
+    overflow: visible;
+  }
+  .app-body {
+    flex-direction: column;
+  }
+  .map-pane {
+    height: 55vh;
+    flex: none;
+  }
+  .sidebar {
+    width: auto;
+    border-left: none;
+    border-top: 1px solid #242a38;
+    overflow-y: visible;
+  }
+}
+
+/* the map redraws from streamed state rather than CSS animation, so the only
+   motion to suppress is transitions on interactive chrome. */
+button,
+select,
+a {
+  transition: background-color 120ms ease, border-color 120ms ease, color 120ms ease;
+}
+
+button:hover:not(:disabled),
+select:hover {
+  border-color: #4a5674;
+}
+
+button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+a:hover {
+  color: #e6e9ef;
+}
+
+/* a visible focus ring is what makes the whole demo keyboard-navigable;
+   the browser default is nearly invisible against this background. */
+:focus-visible {
+  outline: 2px solid #7dd3fc;
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
