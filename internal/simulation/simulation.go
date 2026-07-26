@@ -814,6 +814,16 @@ func (s *Simulation) applyAssignment(a matching.Assignment) {
 	order.Status = domain.OrderAssigned
 	order.AssignedDriver = a.DriverID
 
+	// a driver standing on the pickup when it is assigned has already
+	// collected the order. tick only checks for pickup arrival after moving,
+	// so without this the driver would run the whole delivery still marked
+	// en-route-to-pickup and the order would never enter en_route.
+	atPickup := driver.Position == order.Pickup
+	if atPickup {
+		driver.Status = domain.DriverDelivering
+		order.Status = domain.OrderEnRoute
+	}
+
 	s.emit(domain.EventRouteComputed, map[string]any{
 		"driverId": a.DriverID,
 		"nodeIds":  fullRoute,

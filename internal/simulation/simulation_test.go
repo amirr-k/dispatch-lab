@@ -199,6 +199,58 @@ func TestDriverMovesAndDelivers(t *testing.T) {
 	}
 }
 
+// A driver standing on the pickup when it is assigned has already collected
+// the order. tick only checks for pickup arrival *after* moving a driver, so
+// this case used to run the whole delivery still marked en-route-to-pickup,
+// with the order never entering en_route - the delivery still completed,
+// which is why the lifecycle test above (whose pickup is not a driver's
+// starting node) never caught it.
+func TestDriverAlreadyAtPickupIsDeliveringImmediately(t *testing.T) {
+	s := New("sim", scenarioSeed, scenarioDrivers)
+	s.Start()
+
+	// ordering a pickup at a driver's own position is a zero-distance
+	// assignment, so that driver necessarily wins it.
+	pickup := s.drivers["driver-0"].Position
+	events := s.Apply(PlaceOrder{Pickup: pickup, Destination: scenarioDest})
+
+	d := s.drivers["driver-0"]
+	if d.AssignedOrder == "" {
+		t.Fatalf("expected driver-0 to take the order placed at its own position, got %+v", d)
+	}
+	if d.Status != domain.DriverDelivering {
+		t.Fatalf("a driver already at the pickup should be delivering, got %s", d.Status)
+	}
+	if order := s.orders[d.AssignedOrder]; order.Status != domain.OrderEnRoute {
+		t.Fatalf("an order collected at assignment should be en route, got %s", order.Status)
+	}
+
+	// the emitted event has to agree, since that is what a browser renders.
+	var emitted any
+	for _, e := range events {
+		if e.Type == domain.EventDriverStatusChanged {
+			emitted = e.Payload.(map[string]any)["status"]
+		}
+	}
+	if emitted != domain.DriverDelivering {
+		t.Fatalf("emitted driver status was %v, want %s", emitted, domain.DriverDelivering)
+	}
+
+	// and it must still finish rather than stalling on the pickup node.
+	delivered := false
+	for i := 0; i < 300 && !delivered; i++ {
+		for _, e := range s.Advance() {
+			if e.Type == domain.EventOrderDelivered {
+				delivered = true
+			}
+		}
+		checkInvariants(t, s)
+	}
+	if !delivered {
+		t.Fatal("expected the delivery to complete")
+	}
+}
+
 // checkInvariants asserts the structural rules that must hold after any step:
 // a driver on a route sits exactly on its current route node.
 func checkInvariants(t *testing.T, s *Simulation) {
