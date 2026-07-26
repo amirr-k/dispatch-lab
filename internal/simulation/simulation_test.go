@@ -199,6 +199,54 @@ func TestDriverMovesAndDelivers(t *testing.T) {
 	}
 }
 
+// The estimate the assignment card shows a visitor, and the one every
+// pickup-time metric on the comparison page is derived from, has to be the
+// virtual time the driver genuinely arrives at. It used to add the routed
+// distance to the clock instead of the number of hops, which is a different
+// unit entirely - roughly one edge length per hop too large - so the card
+// promised a pickup at ~294 for a driver that arrived at 3.
+func TestPickupEstimateMatchesWhenTheDriverActuallyArrives(t *testing.T) {
+	s := New("sim", scenarioSeed, scenarioDrivers)
+	s.Start()
+
+	var estimate float64
+	var driverID domain.DriverID
+	for _, e := range s.Apply(PlaceOrder{Pickup: scenarioPickup, Destination: scenarioDest}) {
+		if e.Type != domain.EventOrderAssigned {
+			continue
+		}
+		p := e.Payload.(map[string]any)
+		estimate = p["pickupEtaVirtualTime"].(float64)
+		driverID = p["driverId"].(domain.DriverID)
+	}
+	if driverID == "" {
+		t.Fatal("expected the order to be assigned")
+	}
+
+	var arrivedAt float64
+	for i := 0; i < 300 && arrivedAt == 0; i++ {
+		for _, e := range s.Advance() {
+			if e.Type != domain.EventDriverStatusChanged {
+				continue
+			}
+			p := e.Payload.(map[string]any)
+			if p["driverId"] == driverID && p["status"] == domain.DriverDelivering {
+				arrivedAt = e.VirtualTime
+			}
+		}
+	}
+
+	if arrivedAt == 0 {
+		t.Fatal("expected the driver to reach the pickup")
+	}
+	// the ETA is a continuous distance/speed estimate, but arrival only
+	// happens at a tick boundary, so the real arrival can be up to one tick
+	// later than the estimate.
+	if estimate > arrivedAt || arrivedAt-estimate > virtualStepPerTick {
+		t.Fatalf("estimated pickup at virtual time %.1f but the driver arrived at %.1f", estimate, arrivedAt)
+	}
+}
+
 // A driver standing on the pickup when it is assigned has already collected
 // the order. tick only checks for pickup arrival *after* moving a driver, so
 // this case used to run the whole delivery still marked en-route-to-pickup,

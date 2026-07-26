@@ -87,9 +87,9 @@ type demandShape struct {
 // termination, so it has to sit far enough past the last arrival that a run
 // is not truncated mid-delivery and scored as unassigned.
 var demandShapes = map[DemandLevel]demandShape{
-	DemandLight:  {orderCount: 12, arrivalInterval: 6, maxVirtualTime: 200},
-	DemandSteady: {orderCount: 20, arrivalInterval: 3, maxVirtualTime: 200},
-	DemandRush:   {orderCount: 40, arrivalInterval: 1, maxVirtualTime: 400},
+	DemandLight:  {orderCount: 12, arrivalInterval: 6, maxVirtualTime: 400},
+	DemandSteady: {orderCount: 20, arrivalInterval: 3, maxVirtualTime: 400},
+	DemandRush:   {orderCount: 40, arrivalInterval: 1, maxVirtualTime: 800},
 }
 
 // NormalizeDemand maps arbitrary input onto a known level, defaulting to
@@ -141,11 +141,14 @@ func ScenarioFor(seed int64, drivers int, demand DemandLevel) Scenario {
 	}
 
 	return Scenario{
-		Seed:           seed,
-		Drivers:        drivers,
-		Demand:         demand,
-		Arrivals:       arrivals,
-		BatchWindow:    5,
+		Seed:     seed,
+		Drivers:  drivers,
+		Demand:   demand,
+		Arrivals: arrivals,
+		// a 2-tick window is long enough for a few orders to land in a batch
+		// but short enough that the optimizer's delay does not dominate the
+		// whole trip on the new distance-proportional time model.
+		BatchWindow:    2,
 		Weights:        matching.DefaultCostWeights(),
 		MaxVirtualTime: shape.maxVirtualTime,
 	}

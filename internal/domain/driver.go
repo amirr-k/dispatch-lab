@@ -29,4 +29,9 @@ type Driver struct {
 	// have been waiting longest (utilization fairness), which greedy
 	// nearest-driver baseline matching has no notion of.
 	IdleSince float64
+	// RouteProgress is how far the driver has travelled along the current
+	// edge from Route[RouteIndex] toward Route[RouteIndex+1]. Used to render
+	// drivers between intersections and to make longer roads genuinely take
+	// more virtual time.
+	RouteProgress float64
 }

@@ -26,6 +26,12 @@ const tickInterval = 500 * time.Millisecond
 // advances, independent of actual wall-clock elapsed since the last tick.
 const virtualStepPerTick = 1.0
 
+// driverSpeed is how fast drivers move through the city in distance units per
+// virtual-time unit. With a default cell spacing of 100, a speed of 25 makes a
+// typical edge take 3-4 ticks, so longer roads are visibly slower than short
+// ones and the batch window is small relative to a trip.
+const driverSpeed = 25.0
+
 // MatchingStrategy selects how a simulation matches pending orders to
 // drivers. The comparison runner replays an identical scenario once under
 // each strategy; the live public demo always uses StrategyBaseline so order
@@ -641,9 +647,12 @@ func (s *Simulation) snapshotPayload() map[string]any {
 	drivers := make([]map[string]any, 0, len(driverIDs))
 	for _, id := range driverIDs {
 		d := s.drivers[id]
+		x, y := s.driverPosition(d)
 		drivers = append(drivers, map[string]any{
 			"id": d.ID, "position": d.Position, "status": d.Status,
-			"route": d.Route, "routeIndex": d.RouteIndex, "assignedOrder": d.AssignedOrder,
+			"x": x, "y": y,
+			"route": d.Route, "routeIndex": d.RouteIndex, "routeProgress": d.RouteProgress,
+			"assignedOrder": d.AssignedOrder,
 		})
 	}
 
@@ -829,10 +838,13 @@ func (s *Simulation) applyAssignment(a matching.Assignment) {
 		"nodeIds":  fullRoute,
 		"distance": a.ToPickup.Distance + toDestination.Distance,
 	})
+	// ETA is now a real time: routed distance divided by the driver's fixed
+	// speed. Using hop count worked when every edge cost one tick, but now
+	// longer roads take longer and the estimate has to reflect that.
 	s.emit(domain.EventOrderAssigned, map[string]any{
 		"orderId":              order.ID,
 		"driverId":             a.DriverID,
-		"pickupEtaVirtualTime": s.virtualTime + a.ToPickup.Distance,
+		"pickupEtaVirtualTime": s.virtualTime + a.ToPickup.Distance/driverSpeed,
 		"pickupDistance":       a.ToPickup.Distance,
 	})
 	s.emit(domain.EventDriverStatusChanged, map[string]any{
@@ -842,8 +854,9 @@ func (s *Simulation) applyAssignment(a matching.Assignment) {
 }
 
 // tick advances virtual time by a fixed deterministic step and moves every
-// en-route driver one node forward along its route. A paused simulation
-// holds its state and emits nothing.
+// en-route driver forward at driverSpeed. A paused simulation holds its state
+// and emits nothing. Drivers now travel between intersections, so a longer
+// road takes more ticks than a short one.
 func (s *Simulation) tick() {
 	if s.paused {
 		return
@@ -857,45 +870,114 @@ func (s *Simulation) tick() {
 	sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
 
 	for _, id := range ids {
-		d := s.drivers[id]
-		if len(d.Route) == 0 || d.RouteIndex >= len(d.Route)-1 {
-			continue
-		}
-		d.RouteIndex++
-		d.Position = d.Route[d.RouteIndex]
-
-		s.emit(domain.EventDriverPositionUpdate, map[string]any{
-			"driverId": id,
-			"nodeId":   d.Position,
-		})
-
-		order, hasOrder := s.orders[d.AssignedOrder]
-		if hasOrder && d.Status == domain.DriverEnRouteToPick && d.Position == order.Pickup {
-			d.Status = domain.DriverDelivering
-			order.Status = domain.OrderEnRoute
-			s.emit(domain.EventDriverStatusChanged, map[string]any{"driverId": id, "status": d.Status})
-		}
-
-		if d.RouteIndex == len(d.Route)-1 {
-			if hasOrder {
-				order.Status = domain.OrderDelivered
-				s.emit(domain.EventOrderDelivered, map[string]any{"orderId": order.ID, "driverId": id})
-			}
-			d.Status = domain.DriverIdle
-			d.Route = nil
-			d.RouteIndex = 0
-			d.AssignedOrder = ""
-			d.IdleSince = s.virtualTime
-			if s.driverIndex != nil {
-				pos := s.City.Nodes[d.Position]
-				s.driverIndex.Set(string(id), spatial.Point{X: pos.X, Y: pos.Y})
-			}
-			s.emit(domain.EventDriverStatusChanged, map[string]any{"driverId": id, "status": d.Status})
-		}
+		s.moveDriver(id, s.drivers[id])
 	}
 
 	if s.strategy == StrategyOptimized && s.virtualTime >= s.nextBatchAt {
 		s.runBatch()
 		s.nextBatchAt += s.batchWindow
 	}
+}
+
+// moveDriver advances a driver by driverSpeed*virtualStepPerTick along its
+// current route, consuming whole edges and possibly stopping partway along an
+// edge. It emits one position update with the final interpolated x,y.
+func (s *Simulation) moveDriver(id domain.DriverID, d *domain.Driver) {
+	if len(d.Route) == 0 || d.RouteIndex >= len(d.Route)-1 {
+		return
+	}
+
+	budget := driverSpeed * virtualStepPerTick
+	for budget > 0 {
+		if d.RouteIndex >= len(d.Route)-1 {
+			break
+		}
+		next := d.Route[d.RouteIndex+1]
+		edge, ok := edgeBetween(s.City, d.Position, next)
+		if !ok || edge.Closed {
+			break
+		}
+		remaining := edge.Weight - d.RouteProgress
+		if budget >= remaining {
+			budget -= remaining
+			d.RouteProgress = 0
+			d.RouteIndex++
+			d.Position = next
+			s.handleDriverAtNode(id, d)
+		} else {
+			d.RouteProgress += budget
+			budget = 0
+		}
+	}
+
+	s.emitDriverPosition(id, d)
+}
+
+// handleDriverAtNode checks whether the driver has reached the pickup or the
+// destination and emits the matching status/lifecycle events.
+func (s *Simulation) handleDriverAtNode(id domain.DriverID, d *domain.Driver) {
+	order, hasOrder := s.orders[d.AssignedOrder]
+	if !hasOrder {
+		return
+	}
+
+	if d.Status == domain.DriverEnRouteToPick && d.Position == order.Pickup {
+		d.Status = domain.DriverDelivering
+		order.Status = domain.OrderEnRoute
+		s.emit(domain.EventDriverStatusChanged, map[string]any{"driverId": id, "status": d.Status})
+	}
+
+	if d.RouteIndex == len(d.Route)-1 {
+		order.Status = domain.OrderDelivered
+		s.emit(domain.EventOrderDelivered, map[string]any{"orderId": order.ID, "driverId": id})
+
+		d.Status = domain.DriverIdle
+		d.Route = nil
+		d.RouteIndex = 0
+		d.RouteProgress = 0
+		d.AssignedOrder = ""
+		d.IdleSince = s.virtualTime
+		if s.driverIndex != nil {
+			pos := s.City.Nodes[d.Position]
+			s.driverIndex.Set(string(id), spatial.Point{X: pos.X, Y: pos.Y})
+		}
+		s.emit(domain.EventDriverStatusChanged, map[string]any{"driverId": id, "status": d.Status})
+	}
+}
+
+// emitDriverPosition sends the driver's current interpolated coordinates so the
+// browser can render it between intersections rather than jumping node to node.
+func (s *Simulation) emitDriverPosition(id domain.DriverID, d *domain.Driver) {
+	x, y := s.driverPosition(d)
+	s.emit(domain.EventDriverPositionUpdate, map[string]any{
+		"driverId":      id,
+		"nodeId":        d.Position,
+		"x":             x,
+		"y":             y,
+		"routeIndex":    d.RouteIndex,
+		"routeProgress": d.RouteProgress,
+	})
+}
+
+// driverPosition interpolates the driver's current x,y between the current
+// node and the next one on its route using RouteProgress.
+func (s *Simulation) driverPosition(d *domain.Driver) (float64, float64) {
+	if len(d.Route) == 0 || d.RouteIndex >= len(d.Route)-1 {
+		n := s.City.Nodes[d.Position]
+		return n.X, n.Y
+	}
+	from := s.City.Nodes[d.Position]
+	to := s.City.Nodes[d.Route[d.RouteIndex+1]]
+	edge, ok := edgeBetween(s.City, d.Position, d.Route[d.RouteIndex+1])
+	if !ok || edge.Weight <= 0 {
+		return from.X, from.Y
+	}
+	t := d.RouteProgress / edge.Weight
+	if t < 0 {
+		t = 0
+	}
+	if t > 1 {
+		t = 1
+	}
+	return from.X + (to.X-from.X)*t, from.Y + (to.Y-from.Y)*t
 }
