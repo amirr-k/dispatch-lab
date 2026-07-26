@@ -155,15 +155,13 @@ jobs:
           path: apps/web/test-results/
           retention-days: 7
 
+  # Plain `docker build` (no buildx). The default buildx docker-container
+  # driver pulls moby/buildkit from Docker Hub on setup, which flakes when
+  # Hub is slow/unreachable. This job only needs a local single-arch build.
   container:
     name: container build
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: docker/setup-buildx-action@v3
       - name: build backend image
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          file: deploy/docker/Dockerfile
-          push: false
+        run: docker build -f deploy/docker/Dockerfile -t dispatchlab:ci .
