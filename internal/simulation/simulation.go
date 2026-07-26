@@ -53,9 +53,16 @@ type Config struct {
 	// Strategy defaults to StrategyBaseline (immediate nearest-driver
 	// assignment) when empty.
 	Strategy MatchingStrategy
-	// BatchWindow is the virtual-time gap between optimized-matching runs.
+	// BatchWindow is retained for API/compat; optimized dispatch no longer
+	// fires on a fixed timer once MinBatchSize / MaxWaitVirtualTime are set.
 	// Ignored under StrategyBaseline. Defaults to 5 if <= 0.
 	BatchWindow float64
+	// MinBatchSize is how many pending orders trigger a full optimized
+	// batch. Defaults to 2 if <= 0.
+	MinBatchSize int
+	// MaxWaitVirtualTime is how long the oldest pending order may wait
+	// before a single-order baseline dispatch. Defaults to 2 if <= 0.
+	MaxWaitVirtualTime float64
 	// CandidatesPerOrder bounds how many nearby drivers the spatial index
 	// returns per order for optimized matching. Defaults to 8 if <= 0.
 	CandidatesPerOrder int
@@ -119,6 +126,8 @@ type Simulation struct {
 	strategy           MatchingStrategy
 	batchWindow        float64
 	nextBatchAt        float64
+	minBatchSize       int
+	maxWaitVirtualTime float64
 	candidatesPerOrder int
 	costWeights        matching.CostWeights
 	// pendingOrders holds orders placed but not yet matched, only populated
@@ -132,9 +141,11 @@ type Simulation struct {
 	gridCellSize float64
 	// totalAssignmentComputeMs sums the real wall-clock time spent inside
 	// matching calls (once per immediate assignment or per batch, never
-	// double-counted per resulting pairing) - the comparison runner's
-	// "assignment compute time" metric.
+	// double-counted per resulting pairing) - retained for telemetry/benches,
+	// not published in comparison metrics.
 	totalAssignmentComputeMs float64
+	batchDispatchCount       int
+	immediateDispatchCount   int
 
 	drivers map[domain.DriverID]*domain.Driver
 	orders  map[domain.OrderID]*domain.Order
@@ -180,6 +191,12 @@ func NewWithConfig(cfg Config) *Simulation {
 	if cfg.BatchWindow <= 0 {
 		cfg.BatchWindow = 5
 	}
+	if cfg.MinBatchSize <= 0 {
+		cfg.MinBatchSize = 2
+	}
+	if cfg.MaxWaitVirtualTime <= 0 {
+		cfg.MaxWaitVirtualTime = 2
+	}
 	if cfg.CandidatesPerOrder <= 0 {
 		cfg.CandidatesPerOrder = 8
 	}
@@ -209,11 +226,13 @@ func NewWithConfig(cfg Config) *Simulation {
 		City:               c,
 		driverCount:        cfg.DriverCount,
 		speed:              1,
-		strategy:           cfg.Strategy,
-		batchWindow:        cfg.BatchWindow,
-		nextBatchAt:        cfg.BatchWindow,
-		candidatesPerOrder: cfg.CandidatesPerOrder,
-		costWeights:        cfg.CostWeights,
+		strategy:            cfg.Strategy,
+		batchWindow:         cfg.BatchWindow,
+		nextBatchAt:         cfg.BatchWindow,
+		minBatchSize:        cfg.MinBatchSize,
+		maxWaitVirtualTime:  cfg.MaxWaitVirtualTime,
+		candidatesPerOrder:  cfg.CandidatesPerOrder,
+		costWeights:         cfg.CostWeights,
 		driverIndex:        index,
 		gridCellSize:       gridCfg.CellSpacing,
 		drivers:            drivers,
@@ -306,10 +325,16 @@ func (s *Simulation) Orders() []OrderSummary {
 }
 
 // TotalAssignmentComputeMs is the cumulative real wall-clock time spent
-// inside matching calls so far — the comparison runner's "assignment
-// compute time" metric.
+// inside matching calls so far — retained for telemetry and benches.
 func (s *Simulation) TotalAssignmentComputeMs() float64 {
 	return s.totalAssignmentComputeMs
+}
+
+// DispatchCounts reports how many times optimized matching fired a full
+// batch versus a single-order max-wait (baseline) dispatch. Baseline
+// strategy always returns zeros.
+func (s *Simulation) DispatchCounts() (batch, immediate int) {
+	return s.batchDispatchCount, s.immediateDispatchCount
 }
 
 // TrySubmit enqueues a command without blocking. It returns false when the
@@ -559,6 +584,8 @@ func (s *Simulation) reset() {
 	s.nextOrderID = 0
 	s.pendingOrders = nil
 	s.nextBatchAt = s.batchWindow
+	s.batchDispatchCount = 0
+	s.immediateDispatchCount = 0
 
 	if s.driverIndex != nil {
 		s.driverIndex = spatial.NewGrid(s.gridCellSize)
@@ -798,6 +825,7 @@ func (s *Simulation) runBatch() {
 	if len(s.pendingOrders) == 0 {
 		return
 	}
+	s.batchDispatchCount++
 
 	orders := make([]*domain.Order, 0, len(s.pendingOrders))
 	for _, id := range s.pendingOrders {
@@ -919,16 +947,39 @@ func (s *Simulation) tick() {
 	}
 
 	// both strategies reconsider queued orders after movement, since that is
-	// when drivers become free. Baseline retries every tick because it has no
-	// batching to wait for; optimized waits for its window.
+	// when drivers become free. Baseline retries every tick; optimized uses
+	// adaptive min-batch / max-wait rather than a fixed BatchWindow timer.
 	if s.strategy == StrategyOptimized {
-		if s.virtualTime >= s.nextBatchAt {
-			s.runBatch()
-			s.nextBatchAt += s.batchWindow
-		}
+		s.dispatchOptimized()
 	} else {
 		s.retryPendingBaseline()
 	}
+}
+
+// dispatchOptimized chooses between a full optimized batch and a single-order
+// baseline handoff. Decisions use only virtual time and queue state.
+func (s *Simulation) dispatchOptimized() {
+	if len(s.pendingOrders) == 0 {
+		return
+	}
+	if len(s.pendingOrders) >= s.minBatchSize {
+		s.runBatch()
+		return
+	}
+
+	oldestID := s.pendingOrders[0]
+	oldest := s.orders[oldestID]
+	if oldest == nil || oldest.Status != domain.OrderPending {
+		s.pendingOrders = s.pendingOrders[1:]
+		return
+	}
+	if s.virtualTime-oldest.CreatedAtVirtualTime < s.maxWaitVirtualTime {
+		return
+	}
+
+	s.pendingOrders = s.pendingOrders[1:]
+	s.immediateDispatchCount++
+	s.assignBaseline(oldestID, oldest)
 }
 
 // moveDriver advances a driver by driverSpeed*virtualStepPerTick along its

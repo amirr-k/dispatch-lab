@@ -7,64 +7,80 @@ import (
 	"dispatchlab/internal/domain"
 )
 
-func newOptimizedSim(id string, seed int64, drivers int, batchWindow float64) *Simulation {
+func newOptimizedSim(id string, seed int64, drivers int, minBatch int, maxWait float64) *Simulation {
 	return NewWithConfig(Config{
 		ID: id, Seed: seed, DriverCount: drivers,
-		Strategy: StrategyOptimized, BatchWindow: batchWindow,
+		Strategy: StrategyOptimized, MinBatchSize: minBatch, MaxWaitVirtualTime: maxWait,
 	})
 }
 
 func TestOptimizedStrategyDefersAssignment(t *testing.T) {
-	s := newOptimizedSim("sim", scenarioSeed, scenarioDrivers, 5)
+	s := newOptimizedSim("sim", scenarioSeed, scenarioDrivers, 2, 5)
 	s.Start()
 
 	evs := s.Apply(PlaceOrder{Pickup: scenarioPickup, Destination: scenarioDest})
 	if len(evs) != 1 || evs[0].Type != domain.EventOrderPlaced {
-		t.Fatalf("expected only order.placed before the batch window elapses, got %v", types(evs))
+		t.Fatalf("expected only order.placed before adaptive dispatch, got %v", types(evs))
 	}
 	if len(s.pendingOrders) != 1 {
 		t.Fatalf("expected the order queued as pending, got %d pending", len(s.pendingOrders))
 	}
 }
 
-func TestOptimizedStrategyAssignsAfterBatchWindow(t *testing.T) {
-	s := newOptimizedSim("sim", scenarioSeed, scenarioDrivers, 5)
-	s.Start()
-	s.Apply(PlaceOrder{Pickup: scenarioPickup, Destination: scenarioDest})
-
-	var evs []domain.Event
-	for i := 0; i < 5; i++ {
-		evs = append(evs, s.Advance()...)
-	}
-
-	var sawComputed, sawAssigned bool
-	for _, e := range evs {
-		switch e.Type {
-		case domain.EventRouteComputed:
-			sawComputed = true
-		case domain.EventOrderAssigned:
-			sawAssigned = true
-		}
-	}
-	if !sawComputed || !sawAssigned {
-		t.Fatalf("expected the batch window to assign the pending order, got %v", types(evs))
-	}
-	if len(s.pendingOrders) != 0 {
-		t.Fatalf("expected no orders left pending after a successful batch, got %d", len(s.pendingOrders))
-	}
-}
-
-func TestOptimizedStrategyMultipleOrdersInOneBatch(t *testing.T) {
-	s := newOptimizedSim("sim", scenarioSeed, scenarioDrivers, 5)
+func TestOptimizedMinBatchFiresEarly(t *testing.T) {
+	s := newOptimizedSim("sim", scenarioSeed, scenarioDrivers, 2, 50)
 	s.Start()
 	s.Apply(PlaceOrder{Pickup: scenarioPickup, Destination: scenarioDest})
 	s.Apply(PlaceOrder{Pickup: scenarioDest, Destination: scenarioPickup})
 
+	evs := s.Advance()
+	assigned := 0
+	for _, e := range evs {
+		if e.Type == domain.EventOrderAssigned {
+			assigned++
+		}
+	}
+	if assigned != 2 {
+		t.Fatalf("expected min-batch to assign both orders on the first tick, got %d: %v", assigned, types(evs))
+	}
+	batch, immediate := s.DispatchCounts()
+	if batch != 1 || immediate != 0 {
+		t.Fatalf("expected 1 batch / 0 immediate, got %d / %d", batch, immediate)
+	}
+}
+
+func TestOptimizedMaxWaitFiresSingleOrderBaseline(t *testing.T) {
+	s := newOptimizedSim("sim", scenarioSeed, scenarioDrivers, 2, 2)
+	s.Start()
+	s.Apply(PlaceOrder{Pickup: scenarioPickup, Destination: scenarioDest})
+
 	var evs []domain.Event
-	for i := 0; i < 5; i++ {
+	for i := 0; i < 2; i++ {
 		evs = append(evs, s.Advance()...)
 	}
 
+	var sawAssigned bool
+	for _, e := range evs {
+		if e.Type == domain.EventOrderAssigned {
+			sawAssigned = true
+		}
+	}
+	if !sawAssigned {
+		t.Fatalf("expected max-wait to assign the lone order, got %v", types(evs))
+	}
+	batch, immediate := s.DispatchCounts()
+	if batch != 0 || immediate != 1 {
+		t.Fatalf("expected 0 batch / 1 immediate, got %d / %d", batch, immediate)
+	}
+}
+
+func TestOptimizedStrategyMultipleOrdersInOneBatch(t *testing.T) {
+	s := newOptimizedSim("sim", scenarioSeed, scenarioDrivers, 2, 5)
+	s.Start()
+	s.Apply(PlaceOrder{Pickup: scenarioPickup, Destination: scenarioDest})
+	s.Apply(PlaceOrder{Pickup: scenarioDest, Destination: scenarioPickup})
+
+	evs := s.Advance()
 	assigned := 0
 	for _, e := range evs {
 		if e.Type == domain.EventOrderAssigned {
@@ -78,7 +94,7 @@ func TestOptimizedStrategyMultipleOrdersInOneBatch(t *testing.T) {
 
 func TestOptimizedStrategyDeterministic(t *testing.T) {
 	run := func() []domain.Event {
-		s := newOptimizedSim("sim", scenarioSeed, scenarioDrivers, 5)
+		s := newOptimizedSim("sim", scenarioSeed, scenarioDrivers, 2, 2)
 		var evs []domain.Event
 		evs = append(evs, s.Start()...)
 		evs = append(evs, s.Apply(PlaceOrder{Pickup: scenarioPickup, Destination: scenarioDest})...)
@@ -95,7 +111,7 @@ func TestOptimizedStrategyDeterministic(t *testing.T) {
 }
 
 func TestOptimizedStrategyResetClearsPendingOrders(t *testing.T) {
-	s := newOptimizedSim("sim", scenarioSeed, scenarioDrivers, 5)
+	s := newOptimizedSim("sim", scenarioSeed, scenarioDrivers, 2, 5)
 	s.Start()
 	s.Apply(PlaceOrder{Pickup: scenarioPickup, Destination: scenarioDest})
 	if len(s.pendingOrders) != 1 {
@@ -105,6 +121,10 @@ func TestOptimizedStrategyResetClearsPendingOrders(t *testing.T) {
 	s.Apply(Reset{})
 	if len(s.pendingOrders) != 0 {
 		t.Fatalf("expected reset to clear pending orders, got %d", len(s.pendingOrders))
+	}
+	batch, immediate := s.DispatchCounts()
+	if batch != 0 || immediate != 0 {
+		t.Fatalf("expected reset to clear dispatch counts, got %d / %d", batch, immediate)
 	}
 
 	var evs []domain.Event
@@ -122,7 +142,7 @@ func TestOptimizedStrategyReusesFreedDriverForNextBatch(t *testing.T) {
 	// fewer drivers than orders forces the second order to wait for the
 	// first delivery to free a driver back up, exercising IdleSince and the
 	// spatial index's re-add-on-idle path.
-	s := newOptimizedSim("sim", scenarioSeed, 1, 3)
+	s := newOptimizedSim("sim", scenarioSeed, 1, 2, 2)
 	s.Start()
 	s.Apply(PlaceOrder{Pickup: scenarioPickup, Destination: scenarioDest})
 	s.Apply(PlaceOrder{Pickup: scenarioDest, Destination: scenarioPickup})
@@ -205,15 +225,12 @@ func TestOrdersReflectsFinalStatus(t *testing.T) {
 // exposes the same crossed-cost pattern matching.Optimized is tested
 // against directly - confirming the wiring, not just the algorithm.
 func TestOptimizedBatchAvoidsGreedyPitfall(t *testing.T) {
-	s := newOptimizedSim("sim", scenarioSeed, scenarioDrivers, 3)
+	s := newOptimizedSim("sim", scenarioSeed, scenarioDrivers, 2, 5)
 	s.Start()
 	s.Apply(PlaceOrder{Pickup: scenarioPickup, Destination: scenarioDest})
 	s.Apply(PlaceOrder{Pickup: scenarioDest, Destination: scenarioPickup})
 
-	var evs []domain.Event
-	for i := 0; i < 3; i++ {
-		evs = append(evs, s.Advance()...)
-	}
+	evs := s.Advance()
 
 	drivers := map[domain.DriverID]bool{}
 	for _, e := range evs {

@@ -41,7 +41,7 @@ func FuzzPlaceOrderOptimized(f *testing.F) {
 	f.Add("💥", "n-1-1")
 
 	f.Fuzz(func(t *testing.T, pickup, dest string) {
-		s := newOptimizedSim("fuzz-optimized", 1, 4, 3)
+		s := newOptimizedSim("fuzz-optimized", 1, 4, 2, 3)
 		s.Start()
 		evs := s.Apply(PlaceOrder{Pickup: domain.NodeID(pickup), Destination: domain.NodeID(dest)})
 
