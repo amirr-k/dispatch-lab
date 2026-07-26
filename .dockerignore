@@ -5,6 +5,5 @@ apps/web/dist/
 apps/web/test-results/
 apps/web/playwright-report/
 .git/
-docs/
 resume/
 benchmarks/

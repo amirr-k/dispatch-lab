@@ -1,6 +1,6 @@
 // Command evidence collects Phase 10 measurements into benchmarks/results.
-// Every published number in docs/evidence.md must come from a file this
-// command writes — never from a hand-edited claim.
+// Every published number in the planning-dir docsv2/evidence.md must come
+// from a file this command writes — never from a hand-edited claim.
 package main
 
 import (

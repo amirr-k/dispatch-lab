@@ -13,7 +13,7 @@ Place an order, watch the system choose a driver, and close a road to make it re
 
 ## Status
 
-In active development. See the project board / implementation status doc for current phase.
+In active development. Architecture notes, the OpenAPI schema, and measured evidence live outside this public repo (sibling planning `docsv2/`).
 
 ## Local development
 
