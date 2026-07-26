@@ -223,11 +223,10 @@ func runScenario(scenario Scenario, strategy simulation.MatchingStrategy, label 
 
 	var assignedEvents []domain.Event
 	var totalDistance float64
-	// record must be called on every event this run produces: under
-	// StrategyBaseline, PlaceOrder assigns immediately inside Apply itself,
-	// while under StrategyOptimized the real assignment only surfaces later
-	// from Advance (once a batch window fires) - both paths funnel through
-	// here so neither strategy's events go uncounted.
+	// record must be called on every event this run produces: PlaceOrder may
+	// assign inside Apply (baseline always; optimized when lone+idle), while
+	// batch / max-wait assignments surface from Advance — both paths funnel
+	// through here so neither strategy's events go uncounted.
 	record := func(events []domain.Event) {
 		for _, e := range events {
 			switch e.Type {

@@ -149,8 +149,8 @@ export function ComparePage() {
       <p className="compare-intro">
         Both strategies run the identical scenario — same city, same starting driver positions, same orders arriving at
         the same times — so any difference in the results comes from the assignment decision alone. Neither is
-        guaranteed to win: batch optimization helps when orders compete for the same drivers, and dispatches
-        immediately when a single order has an idle driver rather than waiting out a fixed batch window.
+        guaranteed to win: when orders compete, optimized batches them; when a single order has an idle driver, it
+        assigns right away at intake (same as baseline) instead of waiting for a dispatcher tick.
       </p>
 
       <section className="control-panel" aria-label="Scenario controls">

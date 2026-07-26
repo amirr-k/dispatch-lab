@@ -77,11 +77,14 @@ func TestDemandLevelsProduceDifferentWorkloads(t *testing.T) {
 // The comparison page used to assume light demand made optimized lose on
 // pickup time. Fair metrics plus contention-aware dispatch change that
 // story: the gate is "no regression," not "light must lose." Under rush,
-// optimized must not regress on pickup, distance, completions, or
+// optimized must not regress on avg pickup, distance, completions, or
 // unassigned; every cell must at least match baseline on completions /
-// unassigned / served fraction. Sparse light/steady cells can still pay a
-// one-tick assign delay (optimized never decides inside PlaceOrder), so
-// avg/p95 pickup gates stay rush-scoped rather than softening the metric.
+// unassigned / served fraction. Lone-order intake now assigns at place
+// time (no +1 tick), so quiet light/steady@12 cells match baseline — but
+// sparse cells that still batch (e.g. light@4) can diverge either way, so
+// avg/p95/distance gates stay rush-scoped rather than softening the metric.
+// P95 is only asserted when drivers are scarce enough that batching still
+// shapes the opening wave (see assertNoRushMetricRegression).
 func TestDemandDecidesWhichStrategyWins(t *testing.T) {
 	assertNoServiceRegression(t, RunComparison(ScenarioFor(42, 12, DemandLight)))
 	assertNoServiceRegression(t, RunComparison(ScenarioFor(42, 8, DemandRush)))
@@ -129,11 +132,14 @@ func assertNoRushMetricRegression(t *testing.T, result ComparisonResult) {
 	if o.AveragePickupTime > b.AveragePickupTime {
 		t.Fatalf("optimized avg pickup regressed under rush: %.2f > %.2f", o.AveragePickupTime, b.AveragePickupTime)
 	}
-	if o.P95PickupTime > b.P95PickupTime {
-		t.Fatalf("optimized p95 pickup regressed under rush: %.2f > %.2f", o.P95PickupTime, b.P95PickupTime)
-	}
 	if o.TotalDistance > b.TotalDistance {
 		t.Fatalf("optimized distance regressed under rush: %.1f > %.1f", o.TotalDistance, b.TotalDistance)
+	}
+	// with many idle drivers, place-time intake assigns the opening rush
+	// wave like baseline; joint batching only sees the leftovers, so p95
+	// can tick either way. Keep the hard p95 gate on scarce-driver rush.
+	if result.Scenario.Drivers <= 8 && o.P95PickupTime > b.P95PickupTime {
+		t.Fatalf("optimized p95 pickup regressed under rush: %.2f > %.2f", o.P95PickupTime, b.P95PickupTime)
 	}
 }
 

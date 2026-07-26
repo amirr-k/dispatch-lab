@@ -332,8 +332,8 @@ func (s *Simulation) TotalAssignmentComputeMs() float64 {
 }
 
 // DispatchCounts reports how many times optimized matching fired a full
-// batch versus a single-order max-wait (baseline) dispatch. Baseline
-// strategy always returns zeros.
+// batch versus a single-order immediate (place-time or tick) baseline
+// dispatch. Baseline strategy always returns zeros.
 func (s *Simulation) DispatchCounts() (batch, immediate int) {
 	return s.batchDispatchCount, s.immediateDispatchCount
 }
@@ -746,11 +746,15 @@ func (s *Simulation) handlePlaceOrder(cmd PlaceOrder) {
 		"destinationNodeId": cmd.Destination,
 	})
 
-	// under optimized matching, orders wait for the next tick's dispatch
-	// decision instead of being assigned inside PlaceOrder; runBatch /
-	// immediate baseline (called from tick) pick them up from here.
+	// under optimized matching, queue first so contention is visible. A lone
+	// pending order with an idle driver assigns immediately (same virtual
+	// time as creation) — matching production systems rather than waiting a
+	// tick for purity. Competing orders stay queued for the tick path.
 	if s.strategy == StrategyOptimized {
 		s.pendingOrders = append(s.pendingOrders, orderID)
+		if len(s.pendingOrders) == 1 && s.hasIdleDriver() {
+			s.dispatchImmediateBaseline()
+		}
 		return
 	}
 
@@ -959,7 +963,9 @@ func (s *Simulation) tick() {
 
 // dispatchOptimized chooses between a full optimized batch and a single-order
 // baseline handoff. Decisions use only virtual time, idle drivers, and queue
-// depth — never wall clock or PlaceOrder itself.
+// depth — never wall clock. PlaceOrder may already have assigned a lone
+// idle-driver order; this path covers batch, max-wait, and any lone order
+// that was still pending (e.g. no idle driver at place time).
 //
 // Policy: batch at MinBatchSize; otherwise assign a lone order immediately
 // when any driver is idle; otherwise wait up to MaxWaitVirtualTime, then

@@ -43,9 +43,9 @@ func BenchmarkAdvance(b *testing.B) {
 
 // BenchmarkPlaceOrder covers the command path a visitor actually triggers:
 // matching plus routing plus event emission, under each strategy. Optimized
-// only queues here - its real work happens in the batch that a tick fires -
-// so the two numbers are not comparable on their own, which is what
-// BenchmarkFullScenario is for.
+// may assign inside PlaceOrder when the order is alone with an idle driver;
+// contended orders still queue for the tick path. Use BenchmarkFullScenario
+// for an honest end-to-end cost comparison.
 func BenchmarkPlaceOrder(b *testing.B) {
 	strategies := []struct {
 		name     string
