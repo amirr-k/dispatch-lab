@@ -46,3 +46,10 @@ pickup times include MaxVirtualTime penalty for pending/unassignable orders; opt
 | 99 | steady | 12 | 8.09 | 10.09 | 12861 | 12861 | 0/20 |
 | 99 | rush | 4 | 79.02 | 53.27 | 17150 | 13029 | 103/3 |
 | 99 | rush | 12 | 22.76 | 15.36 | 16395 | 14107 | 21/2 |
+
+## Loadgen (Postgres-backed server)
+
+- Reconcile: ok=True wsSequences=111 persistedSequences=111 sim=3c834a0115685172
+- Concurrent guests: 8 sessions, 16.0 successful orders/sec, order p95=3548167ns
+- WebSocket: 8 streams, 200.8 events/sec aggregate (25.1/stream)
+
