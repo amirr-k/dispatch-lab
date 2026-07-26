@@ -1,22 +1,22 @@
 # Benchmark results
 
-- Commit: `3c19a86d7d622cf1a5b7454f29a31afe1a985445`
+- Commit: `d4c51473b45453d91462ddd5e0ec7a9d4aa2736e`
 - Go: go1.26.5
 - Machine: Apple M4 (darwin/arm64)
-- Collected: 2026-07-26T06:30:14Z
+- Collected: 2026-07-26T06:32:21Z
 - Summary method: nearest-rank percentiles over sorted samples; comparison metrics from RunComparison on the fair pickup metric (unassigned/pending scored at MaxVirtualTime-CreatedAt)
 
 ## Closure reroute (`recalculationMs`)
 
-trials=50 p50=0.005ms p95=0.009ms p99=0.048ms mean=0.007ms avg affected routes=1.00
+trials=50 p50=0.005ms p95=0.010ms p99=0.028ms mean=0.006ms avg affected routes=1.00
 
 ## Matching (40 drivers / 20 orders)
 
-baseline p50=1.315ms p95=1.586ms; optimized p50=0.315ms p95=0.474ms (n=40)
+baseline p50=1.204ms p95=1.431ms; optimized p50=0.294ms p95=0.412ms (n=40)
 
 ## Routing short-hop
 
-p50=2.0µs p95=5.0µs (n=500)
+p50=2.0µs p95=3.0µs (n=500)
 
 ## Simulation throughput
 
@@ -46,9 +46,3 @@ pickup times include MaxVirtualTime penalty for pending/unassignable orders; opt
 | 99 | steady | 12 | 8.09 | 10.09 | 12861 | 12861 | 0/20 |
 | 99 | rush | 4 | 79.02 | 53.27 | 17150 | 13029 | 103/3 |
 | 99 | rush | 12 | 22.76 | 15.36 | 16395 | 14107 | 21/2 |
-
-## Loadgen (Postgres-backed server)
-
-- Reconcile: ok=True wsSequences=111 persistedSequences=111 sim=3c834a0115685172
-- Concurrent guests: 8 sessions, 16.0 successful orders/sec, order p95=3548167
-- WebSocket: 8 streams, 200.8 events/sec aggregate (25.1/stream)

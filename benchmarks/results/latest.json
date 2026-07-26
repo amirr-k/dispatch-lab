@@ -1,8 +1,8 @@
 {
-  "commitSha": "3c19a86d7d622cf1a5b7454f29a31afe1a985445",
+  "commitSha": "d4c51473b45453d91462ddd5e0ec7a9d4aa2736e",
   "goVersion": "go1.26.5",
   "machine": "Apple M4 (darwin/arm64)",
-  "collectedAt": "2026-07-26T06:30:14Z",
+  "collectedAt": "2026-07-26T06:32:21Z",
   "config": {
     "closureSeeds": [
       1,
@@ -51,6 +51,9 @@
       0.004,
       0.004,
       0.004,
+      0.004,
+      0.004,
+      0.004,
       0.005,
       0.005,
       0.005,
@@ -75,8 +78,7 @@
       0.005,
       0.005,
       0.005,
-      0.006,
-      0.006,
+      0.005,
       0.006,
       0.006,
       0.006,
@@ -87,20 +89,18 @@
       0.006,
       0.007,
       0.007,
-      0.008,
-      0.008,
-      0.008,
-      0.009,
-      0.009,
-      0.009,
-      0.009,
+      0.007,
+      0.007,
+      0.007,
       0.01,
-      0.048
+      0.01,
+      0.011,
+      0.028
     ],
     "p50": 0.005,
-    "p95": 0.009,
-    "p99": 0.048,
-    "mean": 0.006640000000000003,
+    "p95": 0.01,
+    "p99": 0.028,
+    "mean": 0.005980000000000003,
     "affectedRoutesAvg": 1
   },
   "comparison": {
@@ -595,16 +595,16 @@
     "note": "pickup times include MaxVirtualTime penalty for pending/unassignable orders; optimized uses adaptive min-batch/max-wait"
   },
   "matching": {
-    "baselineP50Ms": 1.315,
-    "baselineP95Ms": 1.586,
-    "optimizedP50Ms": 0.315,
-    "optimizedP95Ms": 0.474,
+    "baselineP50Ms": 1.204,
+    "baselineP95Ms": 1.431,
+    "optimizedP50Ms": 0.294,
+    "optimizedP95Ms": 0.412,
     "shape": "40 drivers / 20 orders",
     "trials": 40
   },
   "routing": {
     "shortHopP50Us": 2,
-    "shortHopP95Us": 5,
+    "shortHopP95Us": 3,
     "graph": "default 6x6 grid, n-0-0 \u2192 n-3-3",
     "trials": 500
   },
@@ -614,8 +614,6 @@
     "trials": 100
   },
   "loadgen": {
-    "addr": "http://localhost:18080",
-    "database": "postgres (DATABASE_URL=postgres://amirkiadi@localhost:5432/dispatchlab_test)",
     "reconcile": {
       "simulationId": "3c834a0115685172",
       "wsSequences": 111,
@@ -672,6 +670,8 @@
       "eventsPerSecond": 200.75,
       "eventsPerStreamPerSecond": 25.09375
     },
+    "addr": "http://localhost:18080",
+    "database": "postgres (DATABASE_URL=postgres://amirkiadi@localhost:5432/dispatchlab_test)",
     "config": {
       "simulations": 8,
       "duration": "8s",
