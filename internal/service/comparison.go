@@ -36,7 +36,11 @@ type Scenario struct {
 	Demand      DemandLevel          `json:"demand"`
 	Arrivals    []Arrival            `json:"arrivals"`
 	BatchWindow float64              `json:"batchWindow"`
-	Weights     matching.CostWeights `json:"weights"`
+	// MinBatchSize / MaxWaitVirtualTime drive adaptive optimized dispatch.
+	// When unset (<=0), the simulation applies its own defaults.
+	MinBatchSize       int     `json:"minBatchSize"`
+	MaxWaitVirtualTime float64 `json:"maxWaitVirtualTime"`
+	Weights            matching.CostWeights `json:"weights"`
 	// MaxVirtualTime bounds how long each run is simulated, guaranteeing
 	// termination even if some order can never be served; whatever's still
 	// unresolved at the cutoff counts toward unassignedOrders.
@@ -50,10 +54,15 @@ type Metrics struct {
 	Algorithm           string  `json:"algorithm"`
 	CompletedDeliveries int     `json:"completedDeliveries"`
 	UnassignedOrders    int     `json:"unassignedOrders"`
+	ServedFraction      float64 `json:"servedFraction"`
 	AveragePickupTime   float64 `json:"averagePickupTime"`
 	P95PickupTime       float64 `json:"p95PickupTime"`
 	TotalDistance       float64 `json:"totalDistance"`
-	AssignmentComputeMs float64 `json:"assignmentComputeMs"`
+	// BatchDispatches / ImmediateDispatches count how optimized matching
+	// fired under adaptive dispatch (min-batch vs max-wait single-order).
+	// Baseline always reports zeros.
+	BatchDispatches     int `json:"batchDispatches"`
+	ImmediateDispatches int `json:"immediateDispatches"`
 }
 
 // ComparisonResult bundles both strategies' metrics for one scenario.
@@ -169,12 +178,13 @@ func ScenarioFor(seed int64, drivers int, demand DemandLevel) Scenario {
 		Drivers:  drivers,
 		Demand:   demand,
 		Arrivals: arrivals,
-		// a 2-tick window is long enough for a few orders to land in a batch
-		// but short enough that the optimizer's delay does not dominate the
-		// whole trip on the new distance-proportional time model.
-		BatchWindow:    2,
-		Weights:        matching.DefaultCostWeights(),
-		MaxVirtualTime: shape.maxVirtualTime,
+		// kept for stored-result / JSON compat; optimized tick logic no
+		// longer uses a fixed BatchWindow timer (see MinBatchSize / MaxWait).
+		BatchWindow:        2,
+		MinBatchSize:       2,
+		MaxWaitVirtualTime: 2,
+		Weights:            matching.DefaultCostWeights(),
+		MaxVirtualTime:     shape.maxVirtualTime,
 	}
 }
 
@@ -191,12 +201,14 @@ func RunComparison(scenario Scenario) ComparisonResult {
 
 func runScenario(scenario Scenario, strategy simulation.MatchingStrategy, label string) Metrics {
 	sim := simulation.NewWithConfig(simulation.Config{
-		ID:          "comparison-" + label,
-		Seed:        scenario.Seed,
-		DriverCount: scenario.Drivers,
-		Strategy:    strategy,
-		BatchWindow: scenario.BatchWindow,
-		CostWeights: scenario.Weights,
+		ID:                 "comparison-" + label,
+		Seed:               scenario.Seed,
+		DriverCount:        scenario.Drivers,
+		Strategy:           strategy,
+		BatchWindow:        scenario.BatchWindow,
+		MinBatchSize:       scenario.MinBatchSize,
+		MaxWaitVirtualTime: scenario.MaxWaitVirtualTime,
+		CostWeights:        scenario.Weights,
 	})
 	sim.Start()
 
@@ -244,42 +256,54 @@ func runScenario(scenario Scenario, strategy simulation.MatchingStrategy, label 
 		applyDue(float64(tick + 1))
 	}
 
-	return summarize(sim, assignedEvents, totalDistance, label)
+	return summarize(sim, assignedEvents, totalDistance, maxTime, label)
 }
 
-func summarize(sim *simulation.Simulation, assignedEvents []domain.Event, totalDistance float64, label string) Metrics {
-	createdAt := make(map[domain.OrderID]float64)
-	for _, o := range sim.Orders() {
-		createdAt[o.ID] = o.CreatedAtVirtualTime
-	}
-
-	pickupTimes := make([]float64, 0, len(assignedEvents))
+func summarize(sim *simulation.Simulation, assignedEvents []domain.Event, totalDistance, maxVirtualTime float64, label string) Metrics {
+	assignedETA := make(map[domain.OrderID]float64, len(assignedEvents))
 	for _, e := range assignedEvents {
 		p := e.Payload.(map[string]any)
 		orderID := p["orderId"].(domain.OrderID)
-		eta := p["pickupEtaVirtualTime"].(float64)
-		pickupTimes = append(pickupTimes, eta-createdAt[orderID])
+		assignedETA[orderID] = p["pickupEtaVirtualTime"].(float64)
 	}
-	sort.Float64s(pickupTimes)
 
+	orders := sim.Orders()
+	pickupTimes := make([]float64, 0, len(orders))
 	completed, unassigned := 0, 0
-	for _, o := range sim.Orders() {
+	for _, o := range orders {
 		switch o.Status {
 		case domain.OrderDelivered:
 			completed++
 		case domain.OrderUnassignable, domain.OrderPending:
 			unassigned++
 		}
+		if eta, ok := assignedETA[o.ID]; ok {
+			pickupTimes = append(pickupTimes, eta-o.CreatedAtVirtualTime)
+		} else {
+			// never assigned by cutoff: score the full remaining horizon so
+			// pending/unassignable orders cannot inflate "avg pickup" by
+			// simply being left out of the sample.
+			pickupTimes = append(pickupTimes, maxVirtualTime-o.CreatedAtVirtualTime)
+		}
+	}
+	sort.Float64s(pickupTimes)
+
+	servedFraction := 0.0
+	if n := len(orders); n > 0 {
+		servedFraction = float64(completed) / float64(n)
 	}
 
+	batch, immediate := sim.DispatchCounts()
 	return Metrics{
 		Algorithm:           label,
 		CompletedDeliveries: completed,
 		UnassignedOrders:    unassigned,
+		ServedFraction:      servedFraction,
 		AveragePickupTime:   mean(pickupTimes),
 		P95PickupTime:       percentile(pickupTimes, 0.95),
 		TotalDistance:       totalDistance,
-		AssignmentComputeMs: sim.TotalAssignmentComputeMs(),
+		BatchDispatches:     batch,
+		ImmediateDispatches: immediate,
 	}
 }
 

@@ -2,6 +2,8 @@ package service
 
 import (
 	"context"
+	"fmt"
+	"os"
 	"reflect"
 	"testing"
 )
@@ -72,26 +74,66 @@ func TestDemandLevelsProduceDifferentWorkloads(t *testing.T) {
 	}
 }
 
-// The trade-off the comparison page exists to show: with plenty of drivers
-// and sparse demand, the optimizer's batch delay is pure added latency and the
-// nearest-driver baseline wins on pickup time. Under contention the strategies
-// diverge, and the optimizer may serve orders the baseline cannot reach at all.
-// Both cases are deterministic, so if the relationship ever flips the page copy
-// needs to change with it.
+// The comparison page used to assume light demand made optimized lose on
+// pickup time. Fair metrics plus adaptive max-wait change that story: the
+// gate is "no regression," not "light must lose." Under rush, optimized must
+// not regress on pickup, distance, completions, or unassigned; every cell
+// must at least match baseline on completions / unassigned / served fraction.
+// Sparse light/steady cells may still pay up to MaxWaitVirtualTime on pickup
+// when orders never fill a batch — that structural wait is not treated as an
+// algorithm regression (see plan risk note / resume wording).
 func TestDemandDecidesWhichStrategyWins(t *testing.T) {
-	light := RunComparison(ScenarioFor(42, 12, DemandLight))
-	if light.Optimized.AveragePickupTime <= light.Baseline.AveragePickupTime {
-		t.Fatalf("expected batching to cost the optimizer time at light demand, got baseline %.2f vs optimized %.2f",
-			light.Baseline.AveragePickupTime, light.Optimized.AveragePickupTime)
-	}
+	assertNoServiceRegression(t, RunComparison(ScenarioFor(42, 12, DemandLight)))
+	assertNoServiceRegression(t, RunComparison(ScenarioFor(42, 8, DemandRush)))
+	assertNoRushMetricRegression(t, RunComparison(ScenarioFor(42, 8, DemandRush)))
+}
 
-	rush := RunComparison(ScenarioFor(42, 8, DemandRush))
-	if reflect.DeepEqual(rush.Baseline, rush.Optimized) {
-		t.Fatalf("expected baseline and optimized to differ under contention, both got %+v", rush.Baseline)
+func TestCanonicalComparisonSuite(t *testing.T) {
+	seeds := []int64{42, 7, 99}
+	demands := []DemandLevel{DemandLight, DemandSteady, DemandRush}
+	drivers := []int{4, 12}
+
+	for _, seed := range seeds {
+		for _, demand := range demands {
+			for _, n := range drivers {
+				name := fmt.Sprintf("seed=%d/demand=%s/drivers=%d", seed, demand, n)
+				t.Run(name, func(t *testing.T) {
+					result := RunComparison(ScenarioFor(seed, n, demand))
+					assertNoServiceRegression(t, result)
+					if demand == DemandRush {
+						assertNoRushMetricRegression(t, result)
+					}
+				})
+			}
+		}
 	}
-	if rush.Optimized.UnassignedOrders > rush.Baseline.UnassignedOrders {
-		t.Fatalf("expected the optimizer to leave no more orders unserved than baseline, got %d vs %d",
-			rush.Optimized.UnassignedOrders, rush.Baseline.UnassignedOrders)
+}
+
+func assertNoServiceRegression(t *testing.T, result ComparisonResult) {
+	t.Helper()
+	b, o := result.Baseline, result.Optimized
+	if o.CompletedDeliveries < b.CompletedDeliveries {
+		t.Fatalf("optimized completed fewer deliveries: %d < %d", o.CompletedDeliveries, b.CompletedDeliveries)
+	}
+	if o.UnassignedOrders > b.UnassignedOrders {
+		t.Fatalf("optimized left more unassigned: %d > %d", o.UnassignedOrders, b.UnassignedOrders)
+	}
+	if o.ServedFraction < b.ServedFraction {
+		t.Fatalf("optimized served fraction regressed: %.3f < %.3f", o.ServedFraction, b.ServedFraction)
+	}
+}
+
+func assertNoRushMetricRegression(t *testing.T, result ComparisonResult) {
+	t.Helper()
+	b, o := result.Baseline, result.Optimized
+	if o.AveragePickupTime > b.AveragePickupTime {
+		t.Fatalf("optimized avg pickup regressed under rush: %.2f > %.2f", o.AveragePickupTime, b.AveragePickupTime)
+	}
+	if o.P95PickupTime > b.P95PickupTime {
+		t.Fatalf("optimized p95 pickup regressed under rush: %.2f > %.2f", o.P95PickupTime, b.P95PickupTime)
+	}
+	if o.TotalDistance > b.TotalDistance {
+		t.Fatalf("optimized distance regressed under rush: %.1f > %.1f", o.TotalDistance, b.TotalDistance)
 	}
 }
 
@@ -116,6 +158,31 @@ func TestNormalizeDemandFallsBackToSteady(t *testing.T) {
 	}
 }
 
+// TestProbeFixedMetric prints baseline vs optimized on the fair pickup metric
+// for a few representative cells. Before-adaptive numbers (BatchWindow timer)
+// were recorded in session notes; this helper remains for -v debugging.
+func TestProbeFixedMetricBeforeAdaptive(t *testing.T) {
+	cells := []struct {
+		demand  DemandLevel
+		drivers int
+	}{
+		{DemandRush, 8},
+		{DemandLight, 12},
+		{DemandSteady, 4},
+	}
+	for _, c := range cells {
+		r := RunComparison(ScenarioFor(42, c.drivers, c.demand))
+		line := fmt.Sprintf(
+			"PROBE seed=42 demand=%s drivers=%d | baseline avg=%.2f p95=%.2f completed=%d unassigned=%d served=%.3f | optimized avg=%.2f p95=%.2f completed=%d unassigned=%d served=%.3f",
+			c.demand, c.drivers,
+			r.Baseline.AveragePickupTime, r.Baseline.P95PickupTime, r.Baseline.CompletedDeliveries, r.Baseline.UnassignedOrders, r.Baseline.ServedFraction,
+			r.Optimized.AveragePickupTime, r.Optimized.P95PickupTime, r.Optimized.CompletedDeliveries, r.Optimized.UnassignedOrders, r.Optimized.ServedFraction,
+		)
+		t.Log(line)
+		fmt.Fprintln(os.Stderr, line)
+	}
+}
+
 // DefaultScenario is what the showcase runs and every pre-demand stored
 // comparison were generated from, so it has to keep producing exactly the
 // steady workload it always did.
@@ -129,12 +196,6 @@ func TestRunComparisonDeterministic(t *testing.T) {
 	scenario := DefaultScenario(42, 8)
 	a := RunComparison(scenario)
 	b := RunComparison(scenario)
-
-	// compute-time fields are measured wall-clock latencies, not
-	// simulation state, so they're excluded from the determinism check -
-	// same rationale as the simulation package's own determinism test.
-	a.Baseline.AssignmentComputeMs, b.Baseline.AssignmentComputeMs = 0, 0
-	a.Optimized.AssignmentComputeMs, b.Optimized.AssignmentComputeMs = 0, 0
 
 	if !reflect.DeepEqual(a.Baseline, b.Baseline) {
 		t.Fatalf("expected deterministic baseline metrics, got %+v vs %+v", a.Baseline, b.Baseline)
@@ -159,8 +220,8 @@ func TestRunComparisonBothStrategiesServeOrders(t *testing.T) {
 	if result.Optimized.TotalDistance <= 0 {
 		t.Fatal("expected optimized to report a positive total distance")
 	}
-	if result.Baseline.AssignmentComputeMs < 0 || result.Optimized.AssignmentComputeMs < 0 {
-		t.Fatal("expected non-negative compute time")
+	if result.Baseline.ServedFraction <= 0 || result.Optimized.ServedFraction <= 0 {
+		t.Fatal("expected a positive served fraction")
 	}
 }
 
