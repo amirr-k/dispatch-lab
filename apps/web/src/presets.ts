@@ -1,3 +1,4 @@
+import { Package, TrafficCone, Zap } from "lucide-react";
 import * as api from "./api";
 import type { CityNode } from "./types";
 
@@ -79,6 +80,12 @@ interface SnapshotDriver {
   route?: string[];
   routeIndex?: number;
 }
+
+export const PRESET_ICONS: Record<PresetId, typeof Package> = {
+  "one-order": Package,
+  "rush-hour": Zap,
+  "road-closure": TrafficCone,
+};
 
 export const PRESETS: Preset[] = [
   {

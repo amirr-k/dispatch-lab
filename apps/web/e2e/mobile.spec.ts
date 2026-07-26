@@ -10,7 +10,7 @@ test.use({ viewport: { width: 390, height: 844 }, hasTouch: true, isMobile: true
 test("the live demo renders and is usable at a mobile viewport with no horizontal overflow", async ({ page }) => {
   await page.goto("/");
   await expect(page.getByText("DispatchLab").first()).toBeVisible();
-  await expect(page.getByText("● Connected")).toBeVisible({ timeout: 10_000 });
+  await expect(page.getByText("Connected", { exact: true })).toBeVisible({ timeout: 10_000 });
 
   // the map is an SVG with viewBox scaling, not a fixed pixel size - the one
   // real regression this guards against is a fixed-width element (a table,

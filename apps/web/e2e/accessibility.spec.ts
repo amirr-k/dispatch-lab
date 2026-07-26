@@ -8,7 +8,7 @@ const TAGS = ["wcag2a", "wcag2aa"];
 
 test("the landing page has no serious or critical accessibility violations", async ({ page }) => {
   await page.goto("/");
-  await expect(page.getByText("● Connected")).toBeVisible({ timeout: 10_000 });
+  await expect(page.getByText("Connected", { exact: true })).toBeVisible({ timeout: 10_000 });
 
   const results = await new AxeBuilder({ page }).withTags(TAGS).analyze();
   const serious = results.violations.filter((v) => v.impact === "serious" || v.impact === "critical");

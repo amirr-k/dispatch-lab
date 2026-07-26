@@ -45,7 +45,7 @@ body {
   display: flex;
   flex-direction: column;
   gap: 14px;
-  overflow-y: auto;
+  min-height: 0;
 }
 
 @media (max-width: 900px) {
@@ -65,8 +65,300 @@ body {
     width: auto;
     border-left: none;
     border-top: 1px solid #242a38;
+  }
+  /* the page scrolls as a whole on a phone, so a scroll box inside it would
+     just be a second, smaller thing to scroll. */
+  .feed {
     overflow-y: visible;
   }
+}
+
+/* --- Demo page chrome --- */
+
+.app-header {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 12px 20px;
+  border-bottom: 1px solid #242a38;
+  flex-wrap: wrap;
+}
+
+.brand {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.brand strong {
+  font-size: 17px;
+  letter-spacing: -0.2px;
+}
+
+.brand span {
+  color: #8b95a7;
+  font-size: 13px;
+}
+
+.app-nav {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
+  flex-wrap: wrap;
+}
+
+.status-badge,
+.nav-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  padding: 5px 8px;
+}
+
+.status-badge {
+  font-weight: 500;
+}
+
+.nav-link {
+  background: transparent;
+  border: none;
+  color: #9aa4b2;
+  text-decoration: none;
+  cursor: pointer;
+  font: inherit;
+  font-size: 13px;
+}
+
+.nav-link.is-success {
+  color: #22c55e;
+}
+
+.hero {
+  padding: 16px 20px 14px;
+  border-bottom: 1px solid #1a1e28;
+}
+
+.hero h1 {
+  margin: 0;
+  font-size: 21px;
+  font-weight: 650;
+  letter-spacing: -0.4px;
+  max-width: 720px;
+  line-height: 1.25;
+}
+
+.hero p {
+  margin: 6px 0 0;
+  color: #9aa4b2;
+  font-size: 13.5px;
+}
+
+.preset-row {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 14px;
+}
+
+.button.is-running {
+  background: #243050;
+  border-color: #7dd3fc;
+}
+
+.button-sm {
+  padding: 6px 11px;
+  font-size: 13px;
+  border-radius: 6px;
+}
+
+.step-bar,
+.error-bar {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  padding: 10px 20px;
+  font-size: 14px;
+}
+
+.step-bar {
+  background: #10141f;
+  border-left: 3px solid #3f4a63;
+  border-bottom: 1px solid #1a1e28;
+}
+
+.step-bar.is-prompt {
+  border-left-color: #7dd3fc;
+}
+
+.error-bar {
+  background: #2a1215;
+  color: #fca5a5;
+  border-bottom: 1px solid #4c1d24;
+  font-size: 13px;
+}
+
+.card {
+  background: #10141f;
+  border: 1px solid #1e2534;
+  border-radius: 9px;
+  padding: 13px;
+}
+
+.card-grow {
+  flex: 1;
+  min-height: 140px;
+  display: flex;
+  flex-direction: column;
+}
+
+/* #6b7688 here only reached 4:1 against the card background, under the
+   4.5:1 AA minimum; this passes at ~6:1. */
+.empty {
+  margin: 0;
+  color: #8b95a7;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.assignment {
+  display: grid;
+  gap: 5px;
+  font-size: 14px;
+}
+
+.assignment-driver {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-weight: 600;
+  color: #f5a524;
+}
+
+.assignment-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  color: #9aa4b2;
+}
+
+.assignment-row .num {
+  color: #e6e9ef;
+  font-variant-numeric: tabular-nums;
+}
+
+.feed {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  font-size: 13px;
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.feed li {
+  display: flex;
+  gap: 9px;
+  align-items: flex-start;
+  padding: 7px 0;
+  border-bottom: 1px solid #1a1e28;
+}
+
+.feed svg {
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+
+.app-footer {
+  display: flex;
+  align-items: center;
+  gap: 22px;
+  padding: 12px 20px;
+  border-top: 1px solid #242a38;
+  flex-wrap: wrap;
+}
+
+.metrics {
+  display: flex;
+  gap: 22px;
+  flex-wrap: wrap;
+}
+
+.metric {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.metric-label {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: #8b95a7;
+}
+
+.metric-value {
+  font-size: 17px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.footer-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+  flex-wrap: wrap;
+}
+
+.speed-control {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  color: #8b95a7;
+}
+
+.card-title {
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+  color: #8b95a7;
+  margin: 0 0 11px;
+}
+
+.legend {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: grid;
+  gap: 9px;
+  font-size: 13px;
+}
+
+.legend li {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+/* the same dark disc with a coloured ring the map draws, at sidebar scale */
+.legend-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  border: 1.5px solid;
+  background: #0d111a;
+  flex-shrink: 0;
 }
 
 /* --- Compare page --- */

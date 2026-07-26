@@ -16,7 +16,7 @@ test("landing, place an order, observe assignment, close a road, observe reroute
     await expect(page.getByText("DispatchLab").first()).toBeVisible();
     // the websocket has to actually connect - this is the one line the app
     // renders only once the stream is live.
-    await expect(page.getByText("● Connected")).toBeVisible({ timeout: 10_000 });
+    await expect(page.getByText("Connected", { exact: true })).toBeVisible({ timeout: 10_000 });
   });
 
   // captured from the real order request rather than sessionStorage: in dev

@@ -11,6 +11,9 @@ export const COLORS = {
   closed: "#ef4444",
   road: "#39415a",
   node: "#4a5268",
+  // markers sit on top of roads and routes, so they need an opaque backing
+  // for their glyph to stay legible rather than blending into what's under it.
+  markerFill: "#0d111a",
 };
 
 export const driverColor: Record<string, string> = {

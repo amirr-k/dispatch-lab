@@ -1,12 +1,43 @@
 import { useState } from "react";
+import {
+  AlertTriangle,
+  BarChart3,
+  Car,
+  CheckCircle2,
+  Clock,
+  Code2,
+  HelpCircle,
+  Info,
+  MousePointerClick,
+  Package,
+  Pause,
+  Play,
+  RotateCcw,
+  Save,
+  Timer,
+  TrafficCone,
+  Truck,
+  Wifi,
+  WifiOff,
+} from "lucide-react";
 import { CityMap } from "./CityMap";
 import { HowItWorks } from "./HowItWorks";
 import { Legend } from "./Legend";
-import { PRESETS, type PresetId } from "./presets";
+import { PRESETS, PRESET_ICONS, type PresetId } from "./presets";
 import { markShowcase } from "./api";
 import { driverLabel, useSimulation, type FeedEntry } from "./useSimulation";
 
 const SPEEDS = [1, 2, 4];
+
+// the feed already reads as sentences; the icon is there so a glance can tell
+// order from delivery from closure without reading every line.
+const FEED_ICONS: Record<FeedEntry["kind"], typeof Package> = {
+  order: Package,
+  assign: Car,
+  deliver: CheckCircle2,
+  closure: TrafficCone,
+  system: Info,
+};
 
 const feedColor: Record<FeedEntry["kind"], string> = {
   order: "#22c55e",
@@ -101,71 +132,62 @@ function App() {
     <div className="app">
       <HowItWorks open={showHowItWorks} onClose={() => setShowHowItWorks(false)} />
 
-      <header style={styles.header}>
-        <div style={{ display: "flex", alignItems: "baseline", gap: 12, flexWrap: "wrap" }}>
-          <strong style={{ fontSize: 17, letterSpacing: -0.2 }}>DispatchLab</strong>
-          <span style={{ color: "#8b95a7", fontSize: 13 }}>Real-time delivery assignment and routing simulator</span>
+      <header className="app-header">
+        <div className="brand">
+          <strong>DispatchLab</strong>
+          <span>Real-time delivery assignment and routing simulator</span>
         </div>
 
-        <nav style={{ display: "flex", alignItems: "center", gap: 8, marginLeft: "auto", flexWrap: "wrap" }}>
-          <span
-            style={{ ...styles.badge, color: connected ? "#22c55e" : "#ef4444" }}
-            aria-live="polite"
-          >
-            {connected ? "● Connected" : "● Disconnected"}
+        <nav className="app-nav">
+          <span className="status-badge" style={{ color: connected ? "#22c55e" : "#ef4444" }} aria-live="polite">
+            {connected ? <Wifi size={14} aria-hidden /> : <WifiOff size={14} aria-hidden />}
+            {connected ? "Connected" : "Disconnected"}
           </span>
-          <button onClick={() => setShowHowItWorks(true)} style={styles.linkButton}>
+          <button onClick={() => setShowHowItWorks(true)} className="nav-link">
+            <HelpCircle size={14} aria-hidden />
             How it works
           </button>
-          <a href="/compare" style={styles.link}>
+          <a href="/compare" className="nav-link">
+            <BarChart3 size={14} aria-hidden />
             Compare algorithms
           </a>
-          <a
-            href="https://github.com/amirr-k/dispatch-lab"
-            target="_blank"
-            rel="noreferrer"
-            style={styles.link}
-          >
+          <a href="https://github.com/amirr-k/dispatch-lab" target="_blank" rel="noreferrer" className="nav-link">
+            <Code2 size={14} aria-hidden />
             Source
           </a>
         </nav>
       </header>
 
-      <section style={styles.hero}>
-        <h1 style={styles.heroTitle}>Place an order. Watch the system assign and route a driver.</h1>
-        <p style={styles.heroSub}>
-          Click two points on the map to create a delivery, or start with a ready-made scenario.
-        </p>
-        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 14 }}>
-          {PRESETS.map((preset) => (
-            <button
-              key={preset.id}
-              onClick={() => runPreset(preset.id)}
-              disabled={!connected || runningPreset !== null}
-              title={preset.blurb}
-              style={{
-                ...styles.presetButton,
-                ...(runningPreset === preset.id ? styles.presetButtonActive : null),
-              }}
-            >
-              {runningPreset === preset.id ? "Running…" : preset.label}
-            </button>
-          ))}
+      <section className="hero">
+        <h1>Place an order. Watch the system assign and route a driver.</h1>
+        <p>Click two points on the map to create a delivery, or start with a ready-made scenario.</p>
+        <div className="preset-row">
+          {PRESETS.map((preset) => {
+            const Icon = PRESET_ICONS[preset.id];
+            return (
+              <button
+                key={preset.id}
+                onClick={() => runPreset(preset.id)}
+                disabled={!connected || runningPreset !== null}
+                title={preset.blurb}
+                className={`button${runningPreset === preset.id ? " is-running" : ""}`}
+              >
+                <Icon size={15} aria-hidden />
+                {runningPreset === preset.id ? "Running…" : preset.label}
+              </button>
+            );
+          })}
         </div>
       </section>
 
-      <div
-        style={{
-          ...styles.stepBar,
-          borderLeftColor: step.tone === "prompt" ? "#7dd3fc" : "#3f4a63",
-        }}
-        aria-live="polite"
-      >
+      <div className={`step-bar${step.tone === "prompt" ? " is-prompt" : ""}`} aria-live="polite">
+        <MousePointerClick size={15} aria-hidden />
         {step.text}
       </div>
 
       {(actionError || saveError) && (
-        <div style={styles.errorBar} role="alert">
+        <div className="error-bar" role="alert">
+          <AlertTriangle size={15} aria-hidden />
           {actionError ?? saveError}
         </div>
       )}
@@ -184,83 +206,88 @@ function App() {
         </main>
 
         <aside className="sidebar">
-          <section style={styles.card}>
-            <h2 style={styles.cardTitle}>Latest assignment</h2>
+          <section className="card">
+            <h2 className="card-title">Latest assignment</h2>
             {assignment ? (
-              <div style={{ display: "grid", gap: 5, fontSize: 14 }}>
-                <div style={{ fontWeight: 600, color: "#f5a524" }}>{driverLabel(assignment.driverId)}</div>
-                <Row label="Pickup ETA" value={`${assignment.pickupEtaVirtualTime.toFixed(1)} sim-time`} />
+              <div className="assignment">
+                <div className="assignment-driver">
+                  <Car size={16} aria-hidden />
+                  {driverLabel(assignment.driverId)}
+                </div>
+                <Row label="Reaches pickup at" value={`${assignment.pickupEtaVirtualTime.toFixed(1)} sim-time`} />
                 <Row label="Distance to pickup" value={assignment.pickupDistance.toFixed(1)} />
               </div>
             ) : (
-              <p style={styles.empty}>No orders yet — place one to see which driver the system picks and why.</p>
+              <p className="empty">No orders yet — place one to see which driver the system picks and why.</p>
             )}
           </section>
 
-          <section style={styles.card}>
+          <section className="card">
             <Legend />
           </section>
 
-          <section style={{ ...styles.card, flex: 1, minHeight: 140 }}>
-            <h2 style={styles.cardTitle}>Activity</h2>
+          <section className="card card-grow">
+            <h2 className="card-title">Activity</h2>
             {feed.length === 0 ? (
-              <p style={styles.empty}>Events will appear here as deliveries progress.</p>
+              <p className="empty">Events will appear here as deliveries progress.</p>
             ) : (
-              <ul style={{ listStyle: "none", padding: 0, margin: 0, fontSize: 13 }}>
-                {feed.map((entry, i) => (
-                  <li
-                    key={`${entry.id}-${i}`}
-                    style={{
-                      padding: "6px 0",
-                      borderBottom: "1px solid #1a1e28",
-                      display: "flex",
-                      gap: 8,
-                      alignItems: "flex-start",
-                    }}
-                  >
-                    <span style={{ color: feedColor[entry.kind], lineHeight: "18px" }} aria-hidden>
-                      ●
-                    </span>
-                    <span>{entry.text}</span>
-                  </li>
-                ))}
+              // the one part of the sidebar that grows without bound, so it
+              // takes the scrolling instead of the whole sidebar - which
+              // otherwise scrolls the legend off the screen. Focusable
+              // because a scrollable region a keyboard cannot reach is a
+              // WCAG 2.1.1 failure.
+              <ul className="feed" tabIndex={0} aria-label="Activity feed">
+                {feed.map((entry, i) => {
+                  const Icon = FEED_ICONS[entry.kind];
+                  return (
+                    <li key={`${entry.id}-${i}`}>
+                      <Icon size={14} color={feedColor[entry.kind]} aria-hidden />
+                      <span>{entry.text}</span>
+                    </li>
+                  );
+                })}
               </ul>
             )}
           </section>
         </aside>
       </div>
 
-      <footer style={styles.footer}>
-        <div style={styles.metrics}>
-          <Metric label="In progress" value={metrics.pending} />
-          <Metric label="Delivered" value={metrics.delivered} />
-          <Metric label="Unassignable" value={metrics.unassignable} />
-          <Metric label="Sim time" value={metrics.virtualTime.toFixed(1)} />
+      <footer className="app-footer">
+        <div className="metrics">
+          <Metric label="In progress" value={metrics.pending} icon={Truck} />
+          <Metric label="Delivered" value={metrics.delivered} icon={CheckCircle2} />
+          <Metric label="Unassignable" value={metrics.unassignable} icon={AlertTriangle} />
+          <Metric label="Sim time" value={metrics.virtualTime.toFixed(1)} icon={Clock} />
         </div>
 
-        <div style={{ display: "flex", alignItems: "center", gap: 8, marginLeft: "auto", flexWrap: "wrap" }}>
+        <div className="footer-controls">
           {replayUrl ? (
-            <a href={replayUrl} style={{ ...styles.link, color: "#22c55e" }}>
+            <a href={replayUrl} className="nav-link is-success">
+              <Play size={14} aria-hidden />
               Open saved replay
             </a>
           ) : (
-            <button onClick={saveReplay} disabled={!simulationId} style={styles.control}>
+            <button onClick={saveReplay} disabled={!simulationId} className="button button-sm">
+              <Save size={14} aria-hidden />
               Save replay
             </button>
           )}
-          <button onClick={togglePaused} style={styles.control}>
+          <button onClick={togglePaused} className="button button-sm">
+            {paused ? <Play size={14} aria-hidden /> : <Pause size={14} aria-hidden />}
             {paused ? "Resume" : "Pause"}
           </button>
-          <button onClick={reset} style={styles.control}>
+          <button onClick={reset} className="button button-sm">
+            <RotateCcw size={14} aria-hidden />
             Reset
           </button>
-          <label style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13, color: "#8b95a7" }}>
-            Speed
+          <label className="speed-control">
+            <Timer size={14} aria-hidden />
+            <span>Speed</span>
             <select
               aria-label="Playback speed"
               value={speed}
               onChange={(e) => changeSpeed(Number(e.target.value))}
-              style={styles.control}
+              className="button button-sm"
             >
               {SPEEDS.map((s) => (
                 <option key={s} value={s}>
@@ -277,110 +304,23 @@ function App() {
 
 function Row({ label, value }: { label: string; value: string }) {
   return (
-    <div style={{ display: "flex", justifyContent: "space-between", gap: 12, color: "#9aa4b2" }}>
+    <div className="assignment-row">
       <span>{label}</span>
-      <span style={{ color: "#e6e9ef", fontVariantNumeric: "tabular-nums" }}>{value}</span>
+      <span className="num">{value}</span>
     </div>
   );
 }
 
-function Metric({ label, value }: { label: string; value: number | string }) {
+function Metric({ label, value, icon: Icon }: { label: string; value: number | string; icon: typeof Truck }) {
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 1 }}>
-      <span style={{ fontSize: 11, textTransform: "uppercase", letterSpacing: 0.5, color: "#8b95a7" }}>{label}</span>
-      <span style={{ fontSize: 17, fontWeight: 600, fontVariantNumeric: "tabular-nums" }}>{value}</span>
+    <div className="metric">
+      <span className="metric-label">
+        <Icon size={13} aria-hidden />
+        {label}
+      </span>
+      <span className="metric-value">{value}</span>
     </div>
   );
 }
-
-const styles: Record<string, React.CSSProperties> = {
-  header: {
-    display: "flex",
-    alignItems: "center",
-    gap: 16,
-    padding: "12px 20px",
-    borderBottom: "1px solid #242a38",
-    flexWrap: "wrap",
-  },
-  badge: { fontSize: 13, fontWeight: 500 },
-  link: { color: "#9aa4b2", fontSize: 13, textDecoration: "none", padding: "5px 8px" },
-  linkButton: {
-    background: "transparent",
-    border: "none",
-    color: "#9aa4b2",
-    fontSize: 13,
-    cursor: "pointer",
-    padding: "5px 8px",
-    font: "inherit",
-    fontFamily: "inherit",
-  },
-  hero: { padding: "16px 20px 14px", borderBottom: "1px solid #1a1e28" },
-  heroTitle: { margin: 0, fontSize: 21, fontWeight: 650, letterSpacing: -0.4, maxWidth: 720, lineHeight: 1.25 },
-  heroSub: { margin: "6px 0 0", color: "#9aa4b2", fontSize: 13.5 },
-  presetButton: {
-    background: "#1a2033",
-    // longhand so the active variant below can override the color alone
-    // without React warning about a shorthand/longhand conflict.
-    borderWidth: 1,
-    borderStyle: "solid",
-    borderColor: "#2f3850",
-    color: "#e6e9ef",
-    borderRadius: 7,
-    padding: "8px 14px",
-    fontSize: 13.5,
-    cursor: "pointer",
-    font: "inherit",
-    fontFamily: "inherit",
-  },
-  presetButtonActive: { background: "#243050", borderColor: "#7dd3fc" },
-  stepBar: {
-    padding: "10px 20px",
-    background: "#10141f",
-    // kept as separate longhand properties: the tone override below sets
-    // borderLeftColor, and React warns when that is mixed with a shorthand.
-    borderLeftWidth: 3,
-    borderLeftStyle: "solid",
-    borderBottom: "1px solid #1a1e28",
-    fontSize: 14,
-  },
-  errorBar: {
-    padding: "9px 20px",
-    background: "#2a1215",
-    color: "#fca5a5",
-    fontSize: 13,
-    borderBottom: "1px solid #4c1d24",
-  },
-  card: { background: "#10141f", border: "1px solid #1e2534", borderRadius: 9, padding: 13 },
-  cardTitle: {
-    fontSize: 12,
-    textTransform: "uppercase",
-    letterSpacing: 0.6,
-    color: "#8b95a7",
-    margin: "0 0 10px",
-  },
-  // #6b7688 here only reached 4:1 against the card background, under the
-  // 4.5:1 AA minimum; this passes at ~6:1.
-  empty: { margin: 0, color: "#8b95a7", fontSize: 13, lineHeight: 1.5 },
-  footer: {
-    display: "flex",
-    alignItems: "center",
-    gap: 22,
-    padding: "12px 20px",
-    borderTop: "1px solid #242a38",
-    flexWrap: "wrap",
-  },
-  metrics: { display: "flex", gap: 22, flexWrap: "wrap" },
-  control: {
-    background: "#1a2033",
-    border: "1px solid #2f3850",
-    color: "#e6e9ef",
-    borderRadius: 6,
-    padding: "6px 11px",
-    fontSize: 13,
-    cursor: "pointer",
-    font: "inherit",
-    fontFamily: "inherit",
-  },
-};
 
 export default App;

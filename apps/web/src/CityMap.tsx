@@ -1,5 +1,30 @@
 import { COLORS, driverColor } from "./colors";
+import { ICONS, type MapIcon } from "./icons";
 import type { CityEdge, CityNode, Driver, Order } from "./types";
+
+// Glyph renders a lucide icon at a point in this SVG's own coordinate space.
+// lucide draws into a 24-unit box, so a nested <svg> is what lets it be placed
+// and scaled in city coordinates alongside the roads.
+function Glyph({ icon: Icon, x, y, size, color }: {
+  icon: MapIcon;
+  x: number;
+  y: number;
+  size: number;
+  color: string;
+}) {
+  return (
+    <Icon
+      x={x - size / 2}
+      y={y - size / 2}
+      width={size}
+      height={size}
+      color={color}
+      // the map scales to fit its pane, so a glyph this small needs a heavier
+      // stroke than lucide's default to survive being scaled down.
+      strokeWidth={2.4}
+    />
+  );
+}
 
 interface CityMapProps {
   nodes: CityNode[];
@@ -11,6 +36,36 @@ interface CityMapProps {
   onEdgeClick?: (edgeId: string) => void;
 }
 
+// how far above an intersection an order badge floats. Drivers sit on the
+// intersection itself, so without this a driver parked on a pickup hides it
+// and reads as a driver in the wrong colour.
+const BADGE_LIFT = 25;
+
+// Marker is the shared shape of everything the map places at an intersection:
+// a dark disc so the glyph reads against whatever is underneath it, a ring in
+// the thing's own colour, and the icon itself.
+function Marker({ icon, x, y, color, radius, label, halo, lift }: {
+  icon: MapIcon;
+  x: number;
+  y: number;
+  color: string;
+  radius: number;
+  label: string;
+  halo?: boolean;
+  lift?: boolean;
+}) {
+  const cy = lift ? y - BADGE_LIFT : y;
+  return (
+    <g>
+      <title>{label}</title>
+      {lift && <line x1={x} y1={y} x2={x} y2={cy} stroke={color} strokeWidth={1.5} opacity={0.55} />}
+      {halo && <circle cx={x} cy={cy} r={radius * 1.75} fill={color} opacity={0.14} />}
+      <circle cx={x} cy={cy} r={radius} fill={COLORS.markerFill} stroke={color} strokeWidth={2.5} />
+      <Glyph icon={icon} x={x} y={cy} size={radius * 1.5} color={color} />
+    </g>
+  );
+}
+
 export function CityMap({ nodes, edges, drivers, orders, pickup, onNodeClick, onEdgeClick }: CityMapProps) {
   const byId = new Map(nodes.map((n) => [n.id, n]));
   const interactive = Boolean(onNodeClick);
@@ -20,7 +75,8 @@ export function CityMap({ nodes, edges, drivers, orders, pickup, onNodeClick, on
   // the right and bottom edges of the graph.
   const xs = nodes.map((n) => n.x);
   const ys = nodes.map((n) => n.y);
-  const pad = 24;
+  // enough room for a lifted order badge on a top-row intersection
+  const pad = 44;
   const minX = xs.length ? Math.min(...xs) - pad : 0;
   const minY = ys.length ? Math.min(...ys) - pad : 0;
   const width = xs.length ? Math.max(...xs) - Math.min(...xs) + pad * 2 : 100;
@@ -34,6 +90,34 @@ export function CityMap({ nodes, edges, drivers, orders, pickup, onNodeClick, on
       .slice(from)
       .map((id) => byId.get(id))
       .filter((n): n is CityNode => Boolean(n));
+  }
+
+  // a parcel still waiting to be collected. Once its driver is delivering,
+  // the parcel is aboard, so leaving a package sitting on the pickup would
+  // say something that is no longer true.
+  const awaitingPickup = Object.values(orders ?? {}).filter((order) => {
+    const driver = order.assignedDriver ? drivers[order.assignedDriver] : undefined;
+    return driver?.status !== "delivering";
+  });
+
+  // several orders can share an intersection; one badge per node says the
+  // same thing without stacking identical glyphs on one point.
+  const uniqueNodes = (ids: string[]) =>
+    [...new Set(ids)].map((id) => byId.get(id)).filter((n): n is CityNode => Boolean(n));
+
+  const pickupNodes = uniqueNodes(awaitingPickup.map((o) => o.pickup));
+  const destinationNodes = uniqueNodes(Object.values(orders ?? {}).map((o) => o.destination));
+
+  // both directions of a road are separate edges, so a closure marker keyed
+  // by edge id would draw two cones on the same spot.
+  const closureMidpoints = new Map<string, { x: number; y: number }>();
+  for (const edge of edges) {
+    if (!edge.closed) continue;
+    const from = byId.get(edge.from);
+    const to = byId.get(edge.to);
+    if (!from || !to) continue;
+    const key = [edge.from, edge.to].sort().join("|");
+    closureMidpoints.set(key, { x: (from.x + to.x) / 2, y: (from.y + to.y) / 2 });
   }
 
   return (
@@ -123,75 +207,73 @@ export function CityMap({ nodes, edges, drivers, orders, pickup, onNodeClick, on
         </circle>
       ))}
 
-      {/* order pickup and destination markers */}
-      {Object.values(orders ?? {}).map((order) => {
-        const p = byId.get(order.pickup);
-        const d = byId.get(order.destination);
-        return (
-          <g key={`order-${order.id}`} style={{ pointerEvents: "none" }}>
-            {p && (
-              <>
-                <circle cx={p.x} cy={p.y} r={11} fill="none" stroke={COLORS.pickup} strokeWidth={2.5} />
-                <text
-                  x={p.x}
-                  y={p.y + 4}
-                  textAnchor="middle"
-                  fontSize={11}
-                  fontWeight={700}
-                  fill={COLORS.pickup}
-                >
-                  P
-                </text>
-              </>
-            )}
-            {d && (
-              <>
-                <rect
-                  x={d.x - 10}
-                  y={d.y - 10}
-                  width={20}
-                  height={20}
-                  rx={4}
-                  fill="none"
-                  stroke={COLORS.destination}
-                  strokeWidth={2.5}
-                />
-                <text
-                  x={d.x}
-                  y={d.y + 4}
-                  textAnchor="middle"
-                  fontSize={11}
-                  fontWeight={700}
-                  fill={COLORS.destination}
-                >
-                  D
-                </text>
-              </>
-            )}
-          </g>
-        );
-      })}
+      {/* closed-road markers */}
+      <g style={{ pointerEvents: "none" }}>
+        {[...closureMidpoints].map(([key, point]) => (
+          <Marker
+            key={`closure-${key}`}
+            icon={ICONS.closure}
+            x={point.x}
+            y={point.y}
+            color={COLORS.closed}
+            radius={13}
+            label="Road closed"
+          />
+        ))}
+      </g>
+
+      {/* parcels waiting to be collected, and where they are headed */}
+      <g style={{ pointerEvents: "none" }}>
+        {destinationNodes.map((node) => (
+          <Marker
+            key={`destination-${node.id}`}
+            icon={ICONS.destination}
+            x={node.x}
+            y={node.y}
+            color={COLORS.destination}
+            radius={13}
+            lift
+            label={`Delivery address — ${node.id}`}
+          />
+        ))}
+        {pickupNodes.map((node) => (
+          <Marker
+            key={`pickup-${node.id}`}
+            icon={ICONS.pickup}
+            x={node.x}
+            y={node.y}
+            color={COLORS.pickup}
+            radius={13}
+            lift
+            label={`Parcel waiting for collection — ${node.id}`}
+          />
+        ))}
+      </g>
 
       {/* drivers, drawn last so they sit on top */}
-      {Object.values(drivers).map((driver) => {
-        const pos = byId.get(driver.position);
-        if (!pos) return null;
-        const color = driverColor[driver.status] ?? COLORS.idle;
-        const busy = driver.status !== "idle";
-        return (
-          <g
-            key={driver.id}
-            // markers are display-only; without this a driver parked on a
-            // node steals the click meant for the node underneath it
-            style={{ pointerEvents: "none" }}
-          >
-            {busy && <circle cx={pos.x} cy={pos.y} r={13} fill={color} opacity={0.18} />}
-            <circle cx={pos.x} cy={pos.y} r={busy ? 8 : 5.5} fill={color} stroke="#0b0e14" strokeWidth={2}>
-              <title>{`${driver.id} — ${driver.status.replace(/_/g, " ")}`}</title>
-            </circle>
-          </g>
-        );
-      })}
+      <g
+        // markers are display-only; without this a driver parked on a node
+        // steals the click meant for the node underneath it
+        style={{ pointerEvents: "none" }}
+      >
+        {Object.values(drivers).map((driver) => {
+          const pos = byId.get(driver.position);
+          if (!pos) return null;
+          const busy = driver.status !== "idle";
+          return (
+            <Marker
+              key={driver.id}
+              icon={ICONS.driver}
+              x={pos.x}
+              y={pos.y}
+              color={driverColor[driver.status] ?? COLORS.idle}
+              radius={busy ? 15 : 11}
+              halo={busy}
+              label={`${driver.id} — ${driver.status.replace(/_/g, " ")}`}
+            />
+          );
+        })}
+      </g>
     </svg>
   );
 }
