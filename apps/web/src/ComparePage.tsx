@@ -1,36 +1,77 @@
 import { useState } from "react";
+import { ArrowLeft, Download, FileText, Play, SignalHigh, SignalLow, SignalMedium } from "lucide-react";
 import * as api from "./api";
-import type { ComparisonResult, Metrics } from "./api";
+import type { ComparisonResult, DemandLevel, Metrics } from "./api";
+
+const SOURCE_URL = "https://github.com/amirr-k/dispatch-lab/blob/main/internal/service/comparison.go";
 
 interface MetricRow {
   label: string;
   key: keyof Metrics;
-  higherIsBetter: boolean;
+  better: "lower" | "higher";
   format: (v: number) => string;
 }
 
 const ROWS: MetricRow[] = [
-  { label: "Completed deliveries", key: "completedDeliveries", higherIsBetter: true, format: (v) => String(v) },
-  { label: "Unassigned orders", key: "unassignedOrders", higherIsBetter: false, format: (v) => String(v) },
-  { label: "Average pickup time", key: "averagePickupTime", higherIsBetter: false, format: (v) => v.toFixed(2) },
-  { label: "P95 pickup time", key: "p95PickupTime", higherIsBetter: false, format: (v) => v.toFixed(2) },
-  { label: "Total travel distance", key: "totalDistance", higherIsBetter: false, format: (v) => v.toFixed(1) },
-  { label: "Assignment compute time (ms)", key: "assignmentComputeMs", higherIsBetter: false, format: (v) => v.toFixed(3) },
+  { label: "Completed deliveries", key: "completedDeliveries", better: "higher", format: (v) => String(v) },
+  { label: "Unassigned orders", key: "unassignedOrders", better: "lower", format: (v) => String(v) },
+  { label: "Average pickup time", key: "averagePickupTime", better: "lower", format: (v) => v.toFixed(2) },
+  { label: "P95 pickup time", key: "p95PickupTime", better: "lower", format: (v) => v.toFixed(2) },
+  { label: "Total travel distance", key: "totalDistance", better: "lower", format: (v) => v.toFixed(1) },
+  { label: "Assignment compute time", key: "assignmentComputeMs", better: "lower", format: (v) => `${v.toFixed(3)} ms` },
 ];
 
-function deltaLabel(row: MetricRow, baseline: Metrics, optimized: Metrics): { text: string; color: string } {
+const DEMAND_LEVELS: {
+  id: DemandLevel;
+  label: string;
+  Icon: typeof SignalLow;
+  blurb: string;
+}[] = [
+  { id: "light", label: "Light", Icon: SignalLow, blurb: "12 orders, well spread out — more drivers than work." },
+  { id: "steady", label: "Steady", Icon: SignalMedium, blurb: "20 orders at a moderate pace." },
+  { id: "rush", label: "Rush", Icon: SignalHigh, blurb: "40 orders in a burst — orders compete for drivers." },
+];
+
+// delta is always optimized minus baseline, with no colour or arrow attached:
+// whether a negative number is good depends entirely on the metric, so the
+// direction that helps is stated per row instead of encoded in a hue.
+function formatDelta(row: MetricRow, baseline: Metrics, optimized: Metrics): string {
   const b = baseline[row.key] as number;
   const o = optimized[row.key] as number;
   const diff = o - b;
-  if (diff === 0) return { text: "no change", color: "#9aa4b2" };
+  if (diff === 0) return "no change";
 
-  const improved = row.higherIsBetter ? diff > 0 : diff < 0;
-  const pct = b !== 0 ? Math.abs((diff / b) * 100) : 0;
-  const arrow = diff > 0 ? "▲" : "▼";
-  return {
-    text: `${arrow} ${pct.toFixed(1)}%`,
-    color: improved ? "#22c55e" : "#e5484d",
-  };
+  const sign = diff > 0 ? "+" : "−";
+  const magnitude = row.format(Math.abs(diff));
+  if (b === 0) return `${sign}${magnitude}`;
+  return `${sign}${magnitude} (${sign}${Math.abs((diff / b) * 100).toFixed(1)}%)`;
+}
+
+// One plain sentence saying what actually happened, derived from the numbers
+// in the table rather than written ahead of time — neither strategy is
+// pre-declared the winner anywhere in this page.
+function verdict(result: ComparisonResult): string {
+  const b = result.baseline.averagePickupTime;
+  const o = result.optimized.averagePickupTime;
+  const unserved = result.baseline.unassignedOrders - result.optimized.unassignedOrders;
+
+  let sentence: string;
+  if (o === b) {
+    sentence = "Both strategies reached pickups equally fast on average.";
+  } else {
+    const pct = Math.abs(((o - b) / b) * 100).toFixed(1);
+    sentence =
+      o < b
+        ? `Batch optimization reached pickups ${pct}% sooner on average than the nearest-driver baseline.`
+        : `The nearest-driver baseline reached pickups ${pct}% sooner on average than batch optimization.`;
+  }
+
+  if (unserved > 0) {
+    sentence += ` It also served ${unserved} order${unserved === 1 ? "" : "s"} the baseline left unassigned.`;
+  } else if (unserved < 0) {
+    sentence += ` The baseline served ${-unserved} order${unserved === -1 ? "" : "s"} the optimizer left unassigned.`;
+  }
+  return sentence;
 }
 
 function download(result: ComparisonResult) {
@@ -46,6 +87,7 @@ function download(result: ComparisonResult) {
 export function ComparePage() {
   const [seed, setSeed] = useState("");
   const [drivers, setDrivers] = useState(12);
+  const [demand, setDemand] = useState<DemandLevel>("steady");
   const [result, setResult] = useState<ComparisonResult | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -55,8 +97,7 @@ export function ComparePage() {
     setError(null);
     try {
       const parsedSeed = seed.trim() === "" ? undefined : Number(seed);
-      const r = await api.createComparison(parsedSeed, drivers);
-      setResult(r);
+      setResult(await api.createComparison(parsedSeed, drivers, demand));
     } catch (err) {
       setError(err instanceof Error ? err.message : "comparison failed");
     } finally {
@@ -65,79 +106,126 @@ export function ComparePage() {
   }
 
   return (
-    <div style={{ maxWidth: 900, margin: "0 auto", padding: "24px 20px", color: "#e6e9ef" }}>
-      <header style={{ display: "flex", alignItems: "baseline", gap: 16, marginBottom: 8 }}>
-        <h1 style={{ margin: 0, fontSize: 22 }}>Compare Algorithms</h1>
-        <a href="/" style={{ color: "#9aa4b2" }}>
-          ← Back to demo
+    <div className="compare">
+      <header className="compare-header">
+        <h1>Compare Algorithms</h1>
+        <a href="/" className="back-link">
+          <ArrowLeft size={15} aria-hidden />
+          Back to demo
         </a>
       </header>
-      <p style={{ color: "#9aa4b2", marginTop: 0 }}>
-        Runs the identical deterministic scenario — same city, same driver positions, same orders, same demand
-        timing — through the nearest-driver baseline and the batch cost-minimizing optimizer, and reports what
-        actually happened. Neither algorithm is guaranteed to win.
+
+      <p className="compare-intro">
+        Both strategies run the identical scenario — same city, same starting driver positions, same orders arriving at
+        the same times — so any difference in the results comes from the assignment decision alone. Neither is
+        guaranteed to win: batch optimization only earns back the delay of waiting for a batch when orders actually
+        compete for the same drivers.
       </p>
 
-      <div style={{ display: "flex", gap: 12, alignItems: "flex-end", margin: "20px 0" }}>
-        <label style={{ display: "flex", flexDirection: "column", gap: 4, fontSize: 13 }}>
-          Seed (blank = random)
-          <input
-            value={seed}
-            onChange={(e) => setSeed(e.target.value)}
-            placeholder="e.g. 42"
-            style={{ padding: 6, width: 140 }}
-          />
-        </label>
-        <label style={{ display: "flex", flexDirection: "column", gap: 4, fontSize: 13 }}>
-          Drivers
-          <input
-            type="number"
-            min={1}
-            max={40}
-            value={drivers}
-            onChange={(e) => setDrivers(Number(e.target.value))}
-            style={{ padding: 6, width: 100 }}
-          />
-        </label>
-        <button onClick={run} disabled={loading} style={{ padding: "8px 16px" }}>
-          {loading ? "Running…" : "Run Comparison"}
-        </button>
-        {result && <button onClick={() => download(result)}>Download JSON</button>}
-      </div>
+      <section className="control-panel" aria-label="Scenario controls">
+        <div className="control-grid">
+          <label className="field">
+            <span className="field-label">Seed</span>
+            <input value={seed} onChange={(e) => setSeed(e.target.value)} placeholder="e.g. 42" className="field-input" />
+            <span className="field-hint">Generates the city and the orders. Blank picks one at random.</span>
+          </label>
 
-      {error && <p style={{ color: "#e5484d" }}>{error}</p>}
+          <label className="field">
+            <span className="field-label">Drivers</span>
+            <input
+              type="number"
+              min={1}
+              max={40}
+              value={drivers}
+              onChange={(e) => setDrivers(Number(e.target.value))}
+              className="field-input"
+            />
+            <span className="field-hint">1–40. Fewer drivers means more competition per order.</span>
+          </label>
+        </div>
+
+        <fieldset className="demand-picker">
+          <legend className="field-label">Demand level</legend>
+          <div className="demand-options">
+            {DEMAND_LEVELS.map(({ id, label, Icon, blurb }) => (
+              <button
+                key={id}
+                type="button"
+                onClick={() => setDemand(id)}
+                aria-pressed={demand === id}
+                className={`demand-option${demand === id ? " is-selected" : ""}`}
+              >
+                <Icon size={17} aria-hidden />
+                <span className="demand-option-label">{label}</span>
+                <span className="demand-option-blurb">{blurb}</span>
+              </button>
+            ))}
+          </div>
+        </fieldset>
+
+        <div className="control-actions">
+          <button onClick={run} disabled={loading} className="button button-primary">
+            <Play size={15} aria-hidden />
+            {loading ? "Running…" : "Run Comparison"}
+          </button>
+          {result && (
+            <button onClick={() => download(result)} className="button">
+              <Download size={15} aria-hidden />
+              Download JSON
+            </button>
+          )}
+          <a href={SOURCE_URL} target="_blank" rel="noreferrer" className="button button-link">
+            <FileText size={15} aria-hidden />
+            Methodology
+          </a>
+        </div>
+      </section>
+
+      {error && (
+        <p className="alert" role="alert">
+          {error}
+        </p>
+      )}
 
       {result && (
         <>
-          <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 14 }}>
+          <p className="verdict">{verdict(result)}</p>
+
+          <table className="metrics-table">
+            <caption className="visually-hidden">
+              Measured results for the nearest-driver baseline and batch optimizer on the same scenario
+            </caption>
             <thead>
-              <tr style={{ borderBottom: "1px solid #242a38", textAlign: "left" }}>
-                <th style={{ padding: "8px 4px" }}>Metric</th>
-                <th style={{ padding: "8px 4px" }}>Baseline</th>
-                <th style={{ padding: "8px 4px" }}>Optimized</th>
-                <th style={{ padding: "8px 4px" }}>Difference</th>
+              <tr>
+                <th scope="col">Metric</th>
+                <th scope="col">Baseline</th>
+                <th scope="col">Optimized</th>
+                <th scope="col">
+                  Delta
+                  <span className="th-note">optimized − baseline</span>
+                </th>
               </tr>
             </thead>
             <tbody>
-              {ROWS.map((row) => {
-                const delta = deltaLabel(row, result.baseline, result.optimized);
-                return (
-                  <tr key={row.key} style={{ borderBottom: "1px solid #1a1e28" }}>
-                    <td style={{ padding: "8px 4px" }}>{row.label}</td>
-                    <td style={{ padding: "8px 4px" }}>{row.format(result.baseline[row.key] as number)}</td>
-                    <td style={{ padding: "8px 4px" }}>{row.format(result.optimized[row.key] as number)}</td>
-                    <td style={{ padding: "8px 4px", color: delta.color }}>{delta.text}</td>
-                  </tr>
-                );
-              })}
+              {ROWS.map((row) => (
+                <tr key={row.key}>
+                  <th scope="row">
+                    {row.label}
+                    <span className="th-note">{row.better} is better</span>
+                  </th>
+                  <td className="num">{row.format(result.baseline[row.key] as number)}</td>
+                  <td className="num">{row.format(result.optimized[row.key] as number)}</td>
+                  <td className="num delta">{formatDelta(row, result.baseline, result.optimized)}</td>
+                </tr>
+              ))}
             </tbody>
           </table>
 
-          <p style={{ fontSize: 12, color: "#9aa4b2", marginTop: 24 }}>
-            Scenario: seed {result.scenario.seed}, {result.scenario.drivers} drivers, {result.scenario.batchWindow}
-            -virtual-time-unit batch window. Both runs replay the identical checked-in demand pattern deterministically
-            generated from the seed, so this result reproduces exactly from the seed and driver count alone — see{" "}
-            <code>internal/service/comparison.go</code> for how the scenario and metrics are computed.
+          <p className="scenario-note">
+            Scenario: seed {result.scenario.seed}, {result.scenario.drivers} drivers, {result.scenario.demand} demand (
+            {result.scenario.arrivals.length} orders), {result.scenario.batchWindow}-virtual-time-unit batch window.
+            Those first three inputs reproduce this table exactly — the scenario is generated from them in{" "}
+            <code>internal/service/comparison.go</code>, which is also where every metric above is computed.
           </p>
         </>
       )}

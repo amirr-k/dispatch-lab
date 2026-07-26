@@ -161,21 +161,31 @@ export interface Metrics {
   assignmentComputeMs: number;
 }
 
+export type DemandLevel = "light" | "steady" | "rush";
+
 export interface ComparisonResult {
   id: string;
   scenario: {
     seed: number;
     drivers: number;
+    demand: DemandLevel;
+    arrivals: { virtualTime: number }[];
     batchWindow: number;
+    maxVirtualTime: number;
   };
   baseline: Metrics;
   optimized: Metrics;
 }
 
-export function createComparison(seed?: number, drivers?: number): Promise<ComparisonResult> {
-  const body: Record<string, number> = {};
+export function createComparison(
+  seed?: number,
+  drivers?: number,
+  demand?: DemandLevel,
+): Promise<ComparisonResult> {
+  const body: Record<string, number | string> = {};
   if (seed !== undefined) body.seed = seed;
   if (drivers !== undefined) body.drivers = drivers;
+  if (demand !== undefined) body.demand = demand;
   return request("/api/v1/comparisons", { method: "POST", body: JSON.stringify(body) });
 }
 
