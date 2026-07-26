@@ -44,21 +44,30 @@ func TestDemandLevelsProduceDifferentWorkloads(t *testing.T) {
 	}
 
 	// arrival rate matters more than raw count - the same orders spread thin
-	// enough never compete for a driver.
-	rate := func(s Scenario) float64 {
-		last := s.Arrivals[len(s.Arrivals)-1].VirtualTime
-		return float64(len(s.Arrivals)) / last
+	// enough never compete for a driver. Rush is a burst, so its rate is
+	// effectively infinite; light and steady are spread out and can be ranked.
+	last := func(s Scenario) float64 {
+		return s.Arrivals[len(s.Arrivals)-1].VirtualTime
 	}
-	if !(rate(light) < rate(steady) && rate(steady) < rate(rush)) {
-		t.Fatalf("expected arrival rate to rise with demand, got %.3f/%.3f/%.3f",
-			rate(light), rate(steady), rate(rush))
+	if last(steady) <= 0 {
+		t.Fatalf("expected steady demand to have a positive arrival window, got %.1f", last(steady))
+	}
+	if last(rush) != 0 {
+		t.Fatalf("expected rush demand to be a single burst at time 0, last arrival at %.1f", last(rush))
 	}
 
-	for _, s := range []Scenario{light, steady, rush} {
-		last := s.Arrivals[len(s.Arrivals)-1].VirtualTime
-		if s.MaxVirtualTime <= last {
+	rate := func(s Scenario) float64 {
+		return float64(len(s.Arrivals)) / last(s)
+	}
+	if !(rate(light) < rate(steady)) {
+		t.Fatalf("expected light demand to have a lower arrival rate than steady, got %.3f vs %.3f",
+			rate(light), rate(steady))
+	}
+
+	for _, s := range []Scenario{light, steady} {
+		if s.MaxVirtualTime <= last(s) {
 			t.Fatalf("demand %q cuts the run off at %.0f, before its last order even arrives at %.0f",
-				s.Demand, s.MaxVirtualTime, last)
+				s.Demand, s.MaxVirtualTime, last(s))
 		}
 	}
 }

@@ -29,7 +29,7 @@ const DEMAND_LEVELS: {
 }[] = [
   { id: "light", label: "Light", Icon: SignalLow, blurb: "12 orders, well spread out — more drivers than work." },
   { id: "steady", label: "Steady", Icon: SignalMedium, blurb: "20 orders at a moderate pace." },
-  { id: "rush", label: "Rush", Icon: SignalHigh, blurb: "40 orders in a burst — orders compete for drivers." },
+  { id: "rush", label: "Rush", Icon: SignalHigh, blurb: "Orders released in a burst — they compete for the same drivers." },
 ];
 
 // delta is always optimized minus baseline, with no colour or arrow attached:
@@ -51,27 +51,40 @@ function formatDelta(row: MetricRow, baseline: Metrics, optimized: Metrics): str
 // in the table rather than written ahead of time — neither strategy is
 // pre-declared the winner anywhere in this page.
 function verdict(result: ComparisonResult): string {
-  const b = result.baseline.averagePickupTime;
-  const o = result.optimized.averagePickupTime;
-  const unserved = result.baseline.unassignedOrders - result.optimized.unassignedOrders;
+  const b = result.baseline;
+  const o = result.optimized;
+  const pickupDiff = o.averagePickupTime - b.averagePickupTime;
+  const pickupPct = b.averagePickupTime === 0 ? 0 : Math.abs((pickupDiff / b.averagePickupTime) * 100);
+  const servedDiff = o.completedDeliveries - b.completedDeliveries;
+  const distanceDiff = o.totalDistance - b.totalDistance;
 
-  let sentence: string;
-  if (o === b) {
-    sentence = "Both strategies reached pickups equally fast on average.";
-  } else {
-    const pct = Math.abs(((o - b) / b) * 100).toFixed(1);
-    sentence =
-      o < b
-        ? `Batch optimization reached pickups ${pct}% sooner on average than the nearest-driver baseline.`
-        : `The nearest-driver baseline reached pickups ${pct}% sooner on average than batch optimization.`;
+  const parts: string[] = [];
+
+  if (servedDiff > 0) {
+    parts.push(
+      `Batch optimization completed ${servedDiff} more delivery${servedDiff === 1 ? "" : "ies"} than the nearest-driver baseline.`,
+    );
+  } else if (servedDiff < 0) {
+    parts.push(
+      `The nearest-driver baseline completed ${-servedDiff} more delivery${-servedDiff === 1 ? "" : "ies"} than batch optimization.`,
+    );
+  } else if (pickupDiff === 0) {
+    parts.push("Both strategies reached pickups equally fast on average.");
   }
 
-  if (unserved > 0) {
-    sentence += ` It also served ${unserved} order${unserved === 1 ? "" : "s"} the baseline left unassigned.`;
-  } else if (unserved < 0) {
-    sentence += ` The baseline served ${-unserved} order${unserved === -1 ? "" : "s"} the optimizer left unassigned.`;
+  if (pickupDiff < 0) {
+    parts.push(`It also reached pickups ${pickupPct.toFixed(1)}% sooner on average.`);
+  } else if (pickupDiff > 0 && servedDiff === 0) {
+    parts.push(`The baseline reached pickups ${pickupPct.toFixed(1)}% sooner on average.`);
   }
-  return sentence;
+
+  if (distanceDiff < 0) {
+    parts.push(`Batch optimization traveled ${Math.abs(distanceDiff).toFixed(1)} fewer distance units in total.`);
+  } else if (distanceDiff > 0 && servedDiff <= 0) {
+    parts.push(`The baseline traveled ${distanceDiff.toFixed(1)} fewer distance units in total.`);
+  }
+
+  return parts.length > 0 ? parts.join(" ") : "The two strategies produced identical results on every metric.";
 }
 
 function download(result: ComparisonResult) {
@@ -87,7 +100,7 @@ function download(result: ComparisonResult) {
 export function ComparePage() {
   const [seed, setSeed] = useState("");
   const [drivers, setDrivers] = useState(12);
-  const [demand, setDemand] = useState<DemandLevel>("steady");
+  const [demand, setDemand] = useState<DemandLevel>("rush");
   const [result, setResult] = useState<ComparisonResult | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);

@@ -123,7 +123,7 @@ func TestCreateComparisonDefaultsSeedAndDrivers(t *testing.T) {
 func TestCreateComparisonHonorsDemandLevel(t *testing.T) {
 	s := newTestServer()
 	seed := int64(42)
-	drivers := 6
+	drivers := 12
 
 	run := func(demand *string) service.ComparisonResult {
 		t.Helper()
@@ -149,12 +149,13 @@ func TestCreateComparisonHonorsDemandLevel(t *testing.T) {
 	if got := run(&nonsense).Scenario; got.Demand != service.DemandSteady {
 		t.Fatalf("expected an unrecognized demand to fall back to steady, got %q", got.Demand)
 	}
-	if got := run(nil).Scenario; got.Demand != service.DemandSteady {
-		t.Fatalf("expected an omitted demand to default to steady, got %q", got.Demand)
+	if got := run(nil).Scenario; got.Demand != service.DemandRush {
+		t.Fatalf("expected an omitted demand to default to rush, got %q", got.Demand)
 	}
 
-	if len(run(&rush).Scenario.Arrivals) <= len(run(nil).Scenario.Arrivals) {
-		t.Fatal("expected rush demand to place more orders than steady")
+	steady := "steady"
+	if len(run(&rush).Scenario.Arrivals) <= len(run(&steady).Scenario.Arrivals) {
+		t.Fatal("expected rush demand to place more orders than steady demand")
 	}
 }
 

@@ -231,7 +231,7 @@ func (s *Server) createComparison(w http.ResponseWriter, r *http.Request) {
 	if req.Drivers != nil {
 		drivers = clamp(*req.Drivers, 1, maxDrivers)
 	}
-	demand := service.DemandSteady
+	demand := service.DemandRush
 	if req.Demand != nil {
 		demand = service.NormalizeDemand(*req.Demand)
 	}

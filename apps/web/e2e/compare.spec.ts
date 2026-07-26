@@ -16,7 +16,7 @@ test("runs an algorithm comparison and reports both strategies' measured metrics
   // the same seed, driver count and demand level are required to reproduce
   // byte-identical metrics (Phase 4's exit gate) - the scenario summary line
   // is the on-page proof of exactly which inputs produced this table.
-  await expect(page.getByText(/Scenario: seed 42, 12 drivers, steady demand/)).toBeVisible();
+  await expect(page.getByText(/Scenario: seed 42, 12 drivers, rush demand \(24 orders\)/)).toBeVisible();
 
   await expect(page.getByRole("button", { name: "Download JSON" })).toBeVisible();
 });
@@ -45,7 +45,7 @@ test("demand level changes the workload both strategies are run against", async 
 
   await page.getByRole("button", { name: /^Rush/ }).click();
   await page.getByRole("button", { name: "Run Comparison" }).click();
-  await expect(page.getByText(/rush demand \(40 orders\)/)).toBeVisible({ timeout: 30_000 });
+  await expect(page.getByText(/rush demand \(24 orders\)/)).toBeVisible({ timeout: 30_000 });
 
   const rushPickup = await page.getByRole("row", { name: /Average pickup time/ }).innerText();
   expect(rushPickup).not.toBe(lightPickup);

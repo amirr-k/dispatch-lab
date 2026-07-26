@@ -89,7 +89,24 @@ type demandShape struct {
 var demandShapes = map[DemandLevel]demandShape{
 	DemandLight:  {orderCount: 12, arrivalInterval: 6, maxVirtualTime: 400},
 	DemandSteady: {orderCount: 20, arrivalInterval: 3, maxVirtualTime: 400},
-	DemandRush:   {orderCount: 40, arrivalInterval: 1, maxVirtualTime: 800},
+	// rush releases a burst of orders at once so they actually compete for the
+	// same drivers. This is the regime where batch optimization is structurally
+	// better than greedy nearest-driver: it serves orders the baseline cannot
+	// reach before the run ends.
+	DemandRush: {orderCount: 0, arrivalInterval: 0, maxVirtualTime: 1000},
+}
+
+// rushOrderCount is the number of orders in a rush workload. It scales with
+// driver count so the burst stays meaningfully above the available fleet.
+func rushOrderCount(drivers int) int {
+	n := drivers * 2
+	if n < 20 {
+		return 20
+	}
+	if n > 30 {
+		return 30
+	}
+	return n
 }
 
 // NormalizeDemand maps arbitrary input onto a known level, defaulting to
@@ -122,6 +139,13 @@ func ScenarioFor(seed int64, drivers int, demand DemandLevel) Scenario {
 		demand, shape = DemandSteady, demandShapes[DemandSteady]
 	}
 
+	orderCount := shape.orderCount
+	arrivalInterval := shape.arrivalInterval
+	if demand == DemandRush {
+		orderCount = rushOrderCount(drivers)
+		arrivalInterval = 0
+	}
+
 	c := city.GenerateGrid(city.DefaultGridConfig(seed))
 	nodeIDs := make([]domain.NodeID, 0, len(c.Nodes))
 	for id := range c.Nodes {
@@ -130,20 +154,20 @@ func ScenarioFor(seed int64, drivers int, demand DemandLevel) Scenario {
 	sort.Slice(nodeIDs, func(i, j int) bool { return nodeIDs[i] < nodeIDs[j] })
 
 	rng := rand.New(rand.NewSource(seed))
-	arrivals := make([]Arrival, shape.orderCount)
-	for i := 0; i < shape.orderCount; i++ {
+	arrivals := make([]Arrival, orderCount)
+	for i := 0; i < orderCount; i++ {
 		pickup := nodeIDs[rng.Intn(len(nodeIDs))]
 		destination := nodeIDs[rng.Intn(len(nodeIDs))]
 		for destination == pickup {
 			destination = nodeIDs[rng.Intn(len(nodeIDs))]
 		}
-		arrivals[i] = Arrival{VirtualTime: float64(i) * shape.arrivalInterval, Pickup: pickup, Destination: destination}
+		arrivals[i] = Arrival{VirtualTime: float64(i) * arrivalInterval, Pickup: pickup, Destination: destination}
 	}
 
 	return Scenario{
-		Seed:     seed,
-		Drivers:  drivers,
-		Demand:   demand,
+		Seed:    seed,
+		Drivers: drivers,
+		Demand:  demand,
 		Arrivals: arrivals,
 		// a 2-tick window is long enough for a few orders to land in a batch
 		// but short enough that the optimizer's delay does not dominate the

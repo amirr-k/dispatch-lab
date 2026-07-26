@@ -457,11 +457,12 @@ components:
         demand:
           type: string
           enum: [light, steady, rush]
-          default: steady
+          default: rush
           description: >
             How much work arrives over the run. Light spreads 12 orders thinly,
-            steady sends 20, rush sends 40 in a burst. An unrecognized value
-            falls back to steady.
+            steady sends 20, rush releases a burst scaled to the driver count so
+            orders compete for the same fleet. An unrecognized value falls back
+            to steady.
 
     Comparison:
       type: object
