@@ -1,0 +1,19 @@
+services:
+  - type: web
+    name: dispatchlab
+    runtime: docker
+    dockerfilePath: ./deploy/docker/Dockerfile
+    dockerContext: .
+    plan: free
+    region: oregon
+    healthCheckPath: /health/ready
+    autoDeploy: false
+    envVars:
+      - key: LOG_FORMAT
+        value: json
+      - key: LOG_LEVEL
+        value: info
+      - key: DATABASE_URL
+        sync: false
+      - key: ALLOWED_ORIGINS
+        sync: false

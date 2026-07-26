@@ -169,17 +169,16 @@ jobs:
   # both deploy jobs only run on an actual push to main - never on a pull
   # request - and only once every verification job above has passed.
   deploy-backend:
-    name: deploy backend (Fly.io)
+    name: deploy backend (Render)
     needs: [backend, postgres-integration, e2e, container]
     if: github.ref == 'refs/heads/main' && github.event_name == 'push'
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: superfly/flyctl-actions/setup-flyctl@master
-      - name: flyctl deploy
-        run: flyctl deploy --remote-only
-        env:
-          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+      # render.yaml has autoDeploy disabled, so a push alone does not deploy -
+      # this hook is the only trigger, and it only fires once every job above
+      # has passed.
+      - name: trigger Render deploy
+        run: curl -fsS -X POST "${{ secrets.RENDER_DEPLOY_HOOK_URL }}"
 
   deploy-frontend:
     name: deploy frontend (GitHub Pages)

@@ -103,7 +103,7 @@ func run(logger *slog.Logger) error {
 		RequestBurst:      envFloat("RATE_LIMIT_BURST", defaultRateBurst),
 	})
 
-	addr := env("ADDR", defaultAddr)
+	addr := listenAddr()
 	httpServer := &http.Server{
 		Addr:              addr,
 		Handler:           server.Routes(),
@@ -156,6 +156,19 @@ func env(key, fallback string) string {
 		return v
 	}
 	return fallback
+}
+
+// listenAddr honors an explicit ADDR first, then Render's PORT convention
+// (the platform assigns the port and expects the app to bind to it), then
+// falls back to the default.
+func listenAddr() string {
+	if v := os.Getenv("ADDR"); v != "" {
+		return v
+	}
+	if port := os.Getenv("PORT"); port != "" {
+		return ":" + port
+	}
+	return defaultAddr
 }
 
 func envFloat(key string, fallback float64) float64 {
