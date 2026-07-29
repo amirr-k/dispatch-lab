@@ -75,7 +75,7 @@ func run(logger *slog.Logger) error {
 	})
 
 	mgr := service.NewManagerWithConfig(service.ManagerConfig{
-		Max:      maxSimulations,
+		Max:      envInt("MAX_SIMULATIONS", maxSimulations),
 		Store:    eventStore,
 		Metrics:  metrics,
 		Logger:   logger,
@@ -169,6 +169,22 @@ func listenAddr() string {
 		return ":" + port
 	}
 	return defaultAddr
+}
+
+// envInt lets an operator raise the process-wide simulation ceiling for an
+// environment that legitimately needs more than the public demo's default -
+// a benchmark harness creating many short-lived runs, for instance - without
+// touching the constant every other deployment relies on.
+func envInt(key string, fallback int) int {
+	raw := os.Getenv(key)
+	if raw == "" {
+		return fallback
+	}
+	parsed, err := strconv.Atoi(raw)
+	if err != nil {
+		return fallback
+	}
+	return parsed
 }
 
 func envFloat(key string, fallback float64) float64 {

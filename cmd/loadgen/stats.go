@@ -30,6 +30,7 @@ func (l *latencies) len() int {
 type summary struct {
 	Count int           `json:"count"`
 	Min   time.Duration `json:"min"`
+	Mean  time.Duration `json:"mean"`
 	P50   time.Duration `json:"p50"`
 	P95   time.Duration `json:"p95"`
 	P99   time.Duration `json:"p99"`
@@ -51,9 +52,14 @@ func (l *latencies) summarize() summary {
 		idx := int(p * float64(len(sorted)-1))
 		return sorted[idx]
 	}
+	var sum time.Duration
+	for _, d := range sorted {
+		sum += d
+	}
 	return summary{
 		Count: len(sorted),
 		Min:   sorted[0],
+		Mean:  sum / time.Duration(len(sorted)),
 		P50:   pick(0.50),
 		P95:   pick(0.95),
 		P99:   pick(0.99),

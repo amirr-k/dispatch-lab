@@ -34,4 +34,10 @@ type Event struct {
 	// the moment it reaches a browser. Empty for events produced by the
 	// simulation's own clock rather than by a command.
 	TraceID string `json:"traceId,omitempty"`
+	// CausationID is the id of the domain command that produced this event
+	// (distinct from TraceID, which is a telemetry concern and not a
+	// contract a client should depend on). A client can match every event a
+	// single command produced without guessing from timing or event type.
+	// Empty for events with no originating command, same as TraceID.
+	CausationID string `json:"causationId,omitempty"`
 }

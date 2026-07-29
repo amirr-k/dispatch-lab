@@ -69,7 +69,7 @@ func TestCommandsOnMissingSimulationReturnErrNotFound(t *testing.T) {
 	if err := m.SetSpeed(context.Background(), "missing", 2); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("SetSpeed: expected ErrNotFound, got %v", err)
 	}
-	if err := m.CloseRoad(context.Background(), "missing", "e-a-b"); !errors.Is(err, ErrNotFound) {
+	if _, err := m.CloseRoad(context.Background(), "missing", "e-a-b"); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("CloseRoad: expected ErrNotFound, got %v", err)
 	}
 	if _, err := m.Snapshot(context.Background(), "missing"); !errors.Is(err, ErrNotFound) {
@@ -113,8 +113,12 @@ func TestCloseRoadReachesSimulation(t *testing.T) {
 	sim, _ := m.Get(id)
 	edgeID := anyEdgeID(t, sim)
 
-	if err := m.CloseRoad(context.Background(), id, edgeID); err != nil {
+	commandID, err := m.CloseRoad(context.Background(), id, edgeID)
+	if err != nil {
 		t.Fatalf("CloseRoad: %v", err)
+	}
+	if commandID == "" {
+		t.Fatal("expected a non-empty command id")
 	}
 
 	deadline := time.Now().Add(2 * time.Second)

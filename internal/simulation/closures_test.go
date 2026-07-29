@@ -54,6 +54,53 @@ func TestCloseUsedEdgeReroutesDriver(t *testing.T) {
 	}
 }
 
+// TestCloseRoadStampsCausationIDOnEveryEvent proves a command id set on the
+// CloseRoad command rides along on every event it produces - the road.closed
+// event itself and every route.invalidated/route.computed event the reroutes
+// it triggers emit - so a caller can determine exactly which events a given
+// closure caused without guessing from timing or event type.
+func TestCloseRoadStampsCausationIDOnEveryEvent(t *testing.T) {
+	s := New("sim", scenarioSeed, scenarioDrivers)
+	s.Start()
+	s.Apply(PlaceOrder{Pickup: scenarioPickup, Destination: scenarioDest})
+
+	var d *domain.Driver
+	for _, dr := range s.drivers {
+		if len(dr.Route) > 0 {
+			d = dr
+			break
+		}
+	}
+	if d == nil {
+		t.Fatal("expected an assigned driver with a route")
+	}
+
+	from, to := d.Route[d.RouteIndex], d.Route[d.RouteIndex+1]
+	edge, ok := edgeBetween(s.City, from, to)
+	if !ok {
+		t.Fatalf("expected an edge between %s and %s", from, to)
+	}
+
+	const commandID = "cmd-test-123"
+	evs := s.Apply(CloseRoad{EdgeID: edge.ID, CommandID: commandID})
+	if len(evs) == 0 {
+		t.Fatal("expected the closure to produce events")
+	}
+	for _, e := range evs {
+		if e.CausationID != commandID {
+			t.Fatalf("event %s: expected causationId %q, got %q", e.Type, commandID, e.CausationID)
+		}
+	}
+
+	// currentCausationID must not leak into unrelated commands afterward.
+	evs = s.Apply(SetSpeed{Multiplier: 2})
+	for _, e := range evs {
+		if e.CausationID != "" {
+			t.Fatalf("expected no causationId on an unrelated command's event, got %q", e.CausationID)
+		}
+	}
+}
+
 func TestCloseRoadClosesBothDirections(t *testing.T) {
 	s := New("sim", scenarioSeed, scenarioDrivers)
 	s.Start()

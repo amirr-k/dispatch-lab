@@ -275,6 +275,10 @@ type closeRoadRequest struct {
 	EdgeID domain.EdgeID `json:"edgeId"`
 }
 
+type closeRoadResponse struct {
+	CommandID string `json:"commandId"`
+}
+
 func (s *Server) closeRoad(w http.ResponseWriter, r *http.Request) {
 	var req closeRoadRequest
 	if !decode(w, r, &req) {
@@ -284,11 +288,12 @@ func (s *Server) closeRoad(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid_request", "edgeId is required")
 		return
 	}
-	if err := s.mgr.CloseRoad(r.Context(), r.PathValue("id"), req.EdgeID); err != nil {
+	commandID, err := s.mgr.CloseRoad(r.Context(), r.PathValue("id"), req.EdgeID)
+	if err != nil {
 		writeServiceError(w, err)
 		return
 	}
-	w.WriteHeader(http.StatusAccepted)
+	writeJSON(w, http.StatusAccepted, closeRoadResponse{CommandID: commandID})
 }
 
 // reopenRoad takes the edge id as a query parameter rather than a body:

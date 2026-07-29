@@ -23,12 +23,21 @@ import (
 
 func main() {
 	addr := flag.String("addr", "http://localhost:8080", "base URL of a running dispatchlab server")
-	mode := flag.String("mode", "both", "concurrent | websocket | reconcile | both")
+	mode := flag.String("mode", "both", "concurrent | websocket | reconcile | closure-latency | both")
 	simulations := flag.Int("simulations", 10, "number of concurrent guest visitors to simulate")
 	drivers := flag.Int("drivers", 12, "drivers per simulation")
 	duration := flag.Duration("duration", 15*time.Second, "how long to sustain load")
 	think := flag.Duration("think", 0, "delay between requests per client; 0 sends as fast as possible (a burst/ceiling test rather than sustained load)")
 	output := flag.String("output", "", "optional path to write the JSON report")
+
+	closureSeed := flag.Int64("closure-base-seed", 1000, "first deterministic seed used by closure-latency mode; subsequent seeds increment from it")
+	closureSeedCount := flag.Int("closure-seeds", 10, "number of distinct deterministic seeds for closure-latency mode")
+	closureTrialsPerSeed := flag.Int("closure-trials-per-seed", 20, "measured trials per seed for closure-latency mode")
+	closureWarmup := flag.Int("closure-warmup", 10, "warmup trials run and discarded before closure-latency mode starts recording")
+	closureDrivers := flag.Int("closure-drivers", 20, "drivers per simulation for closure-latency mode")
+	closureOrders := flag.Int("closure-orders", 12, "orders placed per simulation for closure-latency mode")
+	closureConcurrency := flag.Int("closure-concurrency", 6, "concurrent trials in flight for closure-latency mode")
+	closureTimeout := flag.Duration("closure-timeout", 5*time.Second, "per-trial wait for the causationId-matched road.closed event before it counts as a WS timeout")
 	flag.Parse()
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
@@ -59,6 +68,31 @@ func main() {
 		r := runWebSocket(ctx, cfg)
 		report.WebSocket = &r
 		printWebSocketReport(r)
+	}
+
+	if *mode == "closure-latency" {
+		ccfg := closureLatencyConfig{
+			addr:          *addr,
+			baseSeed:      *closureSeed,
+			seedCount:     *closureSeedCount,
+			trialsPerSeed: *closureTrialsPerSeed,
+			warmupTrials:  *closureWarmup,
+			drivers:       *closureDrivers,
+			orders:        *closureOrders,
+			concurrency:   *closureConcurrency,
+			timeout:       *closureTimeout,
+		}
+		log.Printf("running road-closure end-to-end latency: %d seeds x %d trials/seed (+%d warmup)",
+			ccfg.seedCount, ccfg.trialsPerSeed, ccfg.warmupTrials)
+		r := runClosureLatency(ctx, ccfg)
+		printClosureLatencyReport(r)
+		if *output != "" {
+			writeReport(*output, r)
+		}
+		if r.FailedTrials > 0 || r.WSTimeouts > 0 || r.VerificationFailures > 0 {
+			os.Exit(1)
+		}
+		return
 	}
 
 	if *mode == "reconcile" {

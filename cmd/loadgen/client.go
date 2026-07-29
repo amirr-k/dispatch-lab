@@ -120,6 +120,107 @@ func (c *client) createSimulation(ctx context.Context, drivers int) (id string, 
 	return created.ID, nodes[0].ID, nodes[len(nodes)-1].ID, elapsed, nil
 }
 
+// snapshotPayload is the subset of a simulation snapshot payload the closure-
+// latency benchmark needs: the road graph (to map a driver's route onto an
+// edge id to close) and every driver's current route. Shared between the
+// REST snapshot response and a simulation.snapshot WebSocket frame, which
+// carry the same shape.
+type snapshotPayload struct {
+	Nodes []struct {
+		ID string `json:"id"`
+	} `json:"nodes"`
+	Edges []struct {
+		ID   string `json:"id"`
+		From string `json:"from"`
+		To   string `json:"to"`
+	} `json:"edges"`
+	Drivers []struct {
+		ID         string   `json:"id"`
+		Status     string   `json:"status"`
+		Route      []string `json:"route"`
+		RouteIndex int      `json:"routeIndex"`
+	} `json:"drivers"`
+}
+
+// edgeID looks up the edge id connecting from->to, mirroring how the
+// frontend's road-closure preset reads a driver's real next edge rather than
+// guessing it from timing.
+func (p snapshotPayload) edgeID(from, to string) (string, bool) {
+	for _, e := range p.Edges {
+		if e.From == from && e.To == to {
+			return e.ID, true
+		}
+	}
+	return "", false
+}
+
+type snapshot struct {
+	Payload snapshotPayload `json:"payload"`
+}
+
+// createSimulationSeeded creates a run with an explicit seed and driver
+// count, deterministic and reproducible run to run - unlike createSimulation
+// it does not also fetch a snapshot, since the closure benchmark needs a
+// fresh snapshot later anyway, after orders have been placed.
+func (c *client) createSimulationSeeded(ctx context.Context, seed int64, drivers int) (id string, elapsed time.Duration, err error) {
+	resp, elapsed, err := c.request(ctx, http.MethodPost, "/api/v1/simulations", map[string]any{"seed": seed, "drivers": drivers})
+	if err != nil {
+		return "", elapsed, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusCreated {
+		return "", elapsed, statusError(resp)
+	}
+	var created struct {
+		ID string `json:"id"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&created); err != nil {
+		return "", elapsed, fmt.Errorf("decode created simulation: %w", err)
+	}
+	return created.ID, elapsed, nil
+}
+
+// getSnapshot fetches the current state of a simulation.
+func (c *client) getSnapshot(ctx context.Context, simID string) (snapshot, time.Duration, error) {
+	resp, elapsed, err := c.request(ctx, http.MethodGet, "/api/v1/simulations/"+simID, nil)
+	if err != nil {
+		return snapshot{}, elapsed, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return snapshot{}, elapsed, statusError(resp)
+	}
+	var snap snapshot
+	if err := json.NewDecoder(resp.Body).Decode(&snap); err != nil {
+		return snapshot{}, elapsed, fmt.Errorf("decode snapshot: %w", err)
+	}
+	return snap, elapsed, nil
+}
+
+// closeRoad submits a real road closure through the public API - the same
+// route a browser click uses - and returns the commandId the server assigned
+// it, which every event the closure produces carries as causationId.
+func (c *client) closeRoad(ctx context.Context, simID, edgeID string) (commandID string, elapsed time.Duration, err error) {
+	resp, elapsed, err := c.request(ctx, http.MethodPost, "/api/v1/simulations/"+simID+"/closures", map[string]string{"edgeId": edgeID})
+	if err != nil {
+		return "", elapsed, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusAccepted {
+		return "", elapsed, statusError(resp)
+	}
+	var decoded struct {
+		CommandID string `json:"commandId"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&decoded); err != nil {
+		return "", elapsed, fmt.Errorf("decode closure response: %w", err)
+	}
+	if decoded.CommandID == "" {
+		return "", elapsed, fmt.Errorf("server returned no commandId")
+	}
+	return decoded.CommandID, elapsed, nil
+}
+
 // placeOrder submits one order and reports whether the server accepted it.
 // A quota or rate-limit refusal is not treated as an error by the caller -
 // it is exactly the boundary these tests exist to find.

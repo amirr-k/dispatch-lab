@@ -29,6 +29,7 @@ func main() {
 	trials := flag.Int("closure-trials", 50, "road-closure recalculationMs samples")
 	loadgenReconcile := flag.String("loadgen-reconcile", "", "path to a cmd/loadgen -mode=reconcile JSON report to fold in (optional)")
 	loadgenThroughput := flag.String("loadgen-throughput", "", "path to a cmd/loadgen -mode=both/websocket JSON report to fold in (optional)")
+	loadgenClosureLatency := flag.String("loadgen-closure-latency", "", "path to a cmd/loadgen -mode=closure-latency JSON report to fold in (optional)")
 	flag.Parse()
 
 	commit := gitSHA()
@@ -59,7 +60,7 @@ func main() {
 	result.Matching = measureMatching()
 	result.Routing = measureRouting()
 	result.Simulation = measureSimulation()
-	result.Loadgen = loadLoadgenEvidence(*loadgenReconcile, *loadgenThroughput)
+	result.Loadgen = loadLoadgenEvidence(*loadgenReconcile, *loadgenThroughput, *loadgenClosureLatency)
 
 	if err := os.MkdirAll(*outDir, 0o755); err != nil {
 		fatalf("mkdir: %v", err)
@@ -100,9 +101,10 @@ type Evidence struct {
 // a client for driving a live server, and cmd/evidence has no business
 // depending on it.
 type LoadgenEvidence struct {
-	Reconcile  json.RawMessage `json:"reconcile,omitempty"`
-	Concurrent json.RawMessage `json:"concurrent,omitempty"`
-	WebSocket  json.RawMessage `json:"webSocket,omitempty"`
+	Reconcile      json.RawMessage `json:"reconcile,omitempty"`
+	Concurrent     json.RawMessage `json:"concurrent,omitempty"`
+	WebSocket      json.RawMessage `json:"webSocket,omitempty"`
+	ClosureLatency json.RawMessage `json:"closureLatency,omitempty"`
 }
 
 type LatencyBlock struct {
@@ -378,8 +380,8 @@ func mean(xs []float64) float64 {
 // loadLoadgenEvidence folds in cmd/loadgen JSON reports if paths were given.
 // Both are optional and independent, since a reconcile run and a throughput
 // run are separate invocations of cmd/loadgen against a live server.
-func loadLoadgenEvidence(reconcilePath, throughputPath string) *LoadgenEvidence {
-	if reconcilePath == "" && throughputPath == "" {
+func loadLoadgenEvidence(reconcilePath, throughputPath, closureLatencyPath string) *LoadgenEvidence {
+	if reconcilePath == "" && throughputPath == "" && closureLatencyPath == "" {
 		return nil
 	}
 	out := &LoadgenEvidence{}
@@ -402,6 +404,23 @@ func loadLoadgenEvidence(reconcilePath, throughputPath string) *LoadgenEvidence 
 		}
 		out.Concurrent = report.Concurrent
 		out.WebSocket = report.WebSocket
+	}
+	if closureLatencyPath != "" {
+		// the raw file (with its full per-trial array) is the timestamped
+		// evidence artifact under benchmarks/results/ - what gets folded in
+		// here is the summary only, with "trials" stripped, so latest.md
+		// stays a summary rather than reproducing hundreds of trial records.
+		var report map[string]any
+		if err := readJSON(closureLatencyPath, &report); err != nil {
+			fatalf("read loadgen closure-latency report: %v", err)
+		}
+		delete(report, "trials")
+		report["rawTrialsFile"] = closureLatencyPath
+		summarized, err := json.Marshal(report)
+		if err != nil {
+			fatalf("re-marshal loadgen closure-latency summary: %v", err)
+		}
+		out.ClosureLatency = summarized
 	}
 	return out
 }
@@ -465,6 +484,11 @@ func renderMarkdown(e Evidence) string {
 		}
 		if e.Loadgen.WebSocket != nil {
 			fmt.Fprintf(&b, "WebSocket update throughput: `%s`\n\n", string(e.Loadgen.WebSocket))
+		}
+		if e.Loadgen.ClosureLatency != nil {
+			fmt.Fprintf(&b, "### Road-closure end-to-end rerouting latency (real server, real PostgreSQL, real WebSocket)\n\n")
+			fmt.Fprintf(&b, "One client-side monotonic timer per trial: immediately before `POST .../closures` to the moment the causationId-matched `road.closed` frame is fully received over the WebSocket connection. Includes HTTP transport/parsing, the simulation's command-queue wait, affected-driver detection, A* recomputation, event creation/serialization, and WebSocket delivery. PostgreSQL persistence is asynchronous and off this critical path - verified separately per trial, not timed.\n\n")
+			fmt.Fprintf(&b, "```json\n%s\n```\n\n", string(e.Loadgen.ClosureLatency))
 		}
 	}
 	return b.String()

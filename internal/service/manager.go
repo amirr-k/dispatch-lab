@@ -303,9 +303,17 @@ func (m *Manager) SetSpeed(ctx context.Context, id string, multiplier float64) e
 	return m.submit(ctx, id, simulation.SetSpeed{Multiplier: multiplier})
 }
 
-// CloseRoad closes a road segment in a simulation.
-func (m *Manager) CloseRoad(ctx context.Context, id string, edgeID domain.EdgeID) error {
-	return m.submit(ctx, id, simulation.CloseRoad{EdgeID: edgeID})
+// CloseRoad closes a road segment in a simulation. It returns the command id
+// assigned to the closure, which is stamped as causationId on the resulting
+// road.closed event and any route.invalidated/route.computed/
+// order.unassignable events the reroutes it triggers produce, so a caller
+// can determine exactly which events this specific closure caused.
+func (m *Manager) CloseRoad(ctx context.Context, id string, edgeID domain.EdgeID) (string, error) {
+	commandID := generateID()
+	if err := m.submit(ctx, id, simulation.CloseRoad{EdgeID: edgeID, CommandID: commandID}); err != nil {
+		return "", err
+	}
+	return commandID, nil
 }
 
 // ReopenRoad reopens a previously closed road segment for the simulation the

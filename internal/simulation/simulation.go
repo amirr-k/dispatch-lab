@@ -98,8 +98,15 @@ type Reset struct{}
 type SetSpeed struct{ Multiplier float64 }
 
 // CloseRoad closes both directions of the road segment the given edge
-// belongs to, invalidating any driver route that crosses it.
-type CloseRoad struct{ EdgeID domain.EdgeID }
+// belongs to, invalidating any driver route that crosses it. CommandID, when
+// set, is stamped as CausationID on every event this command produces (the
+// road.closed event itself and any route.invalidated/route.computed/
+// order.unassignable/driver.status.changed events the resulting reroutes
+// emit), so a caller can determine exactly which events one closure caused.
+type CloseRoad struct {
+	EdgeID    domain.EdgeID
+	CommandID string
+}
 
 // ReopenRoad reopens both directions of a previously closed road segment. It
 // never needs to recalculate any route: every currently active route was
@@ -169,6 +176,11 @@ type Simulation struct {
 	// HTTP request to the events a browser eventually renders. Only ever
 	// touched on the actor goroutine.
 	currentTrace string
+	// currentCausationID is the command id of the command being handled right
+	// now, when that command carries one (currently only CloseRoad). Every
+	// event emitted while it is set carries it as CausationID. Only ever
+	// touched on the actor goroutine.
+	currentCausationID string
 
 	commands chan envelope
 	events   chan domain.Event
@@ -475,6 +487,9 @@ func (s *Simulation) handleCloseRoad(c CloseRoad) {
 		return
 	}
 
+	s.currentCausationID = c.CommandID
+	defer func() { s.currentCausationID = "" }()
+
 	edgeIDs := []domain.EdgeID{edge.ID}
 	s.City.SetClosed(edge.ID, true)
 	if reverse, ok := edgeBetween(s.City, edge.To, edge.From); ok {
@@ -749,6 +764,7 @@ func (s *Simulation) emit(t domain.EventType, payload any) {
 		Type:          t,
 		Payload:       payload,
 		TraceID:       s.currentTrace,
+		CausationID:   s.currentCausationID,
 	})
 }
 

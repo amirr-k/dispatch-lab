@@ -243,6 +243,13 @@ func TestCloseRoadAccepted(t *testing.T) {
 	if rec.Code != http.StatusAccepted {
 		t.Fatalf("expected 202, got %d: %s", rec.Code, rec.Body.String())
 	}
+	var closeResp closeRoadResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &closeResp); err != nil {
+		t.Fatalf("decode close response: %v", err)
+	}
+	if closeResp.CommandID == "" {
+		t.Fatal("expected a non-empty commandId in the response")
+	}
 }
 
 func TestReopenRoadRejectsMissingEdgeID(t *testing.T) {
