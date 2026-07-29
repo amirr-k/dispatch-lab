@@ -1,18 +1,18 @@
 # Benchmark results
 
-- Commit: `52a1ee8c6daa2aad2a671cb7bb80206f605ff1f4`
+- Commit: `0907f325710cc1db22a7554a62a9ea3940e99e55`
 - Go: go1.26.5
 - Machine: Apple M4 (darwin/arm64)
-- Collected: 2026-07-26T21:09:05Z
+- Collected: 2026-07-29T06:13:59Z
 - Summary method: nearest-rank percentiles over sorted samples; comparison metrics from RunComparison on the fair pickup metric (unassigned/pending scored at MaxVirtualTime-CreatedAt)
 
 ## Closure reroute (`recalculationMs`)
 
-trials=50 p50=0.005ms p95=0.009ms p99=0.055ms mean=0.006ms avg affected routes=1.00
+trials=50 p50=0.005ms p95=0.007ms p99=0.011ms mean=0.005ms avg affected routes=1.00
 
 ## Matching (40 drivers / 20 orders)
 
-baseline p50=1.179ms p95=1.306ms; optimized p50=1.265ms p95=1.335ms (n=40)
+baseline p50=1.172ms p95=1.337ms; optimized p50=1.274ms p95=1.387ms (n=40)
 
 ## Routing short-hop
 
@@ -107,4 +107,12 @@ WebSocket update throughput: `{
     "eventsPerSecond": 260,
     "eventsPerStreamPerSecond": 32.5
   }`
+
+### Road-closure end-to-end rerouting latency (real server, real PostgreSQL, real WebSocket)
+
+One client-side monotonic timer per trial: immediately before `POST .../closures` to the moment the causationId-matched `road.closed` frame is fully received over the WebSocket connection. Includes HTTP transport/parsing, the simulation's command-queue wait, affected-driver detection, A* recomputation, event creation/serialization, and WebSocket delivery. PostgreSQL persistence is asynchronous and off this critical path - verified separately per trial, not timed.
+
+```json
+{"addr":"http://localhost:8099","affectedDriversPerClosure":{"count":250,"max":3,"mean":2.2,"min":1,"p50":2,"p95":3},"affectedRouteDetectionAndRoutingLatency":{"count":250,"max":73000,"mean":18820,"min":8000,"p50":16000,"p95":38000,"p99":54000},"drivers":20,"endToEndLatency":{"count":250,"max":4077000,"mean":1100943,"min":422000,"p50":1026999,"p95":1976000,"p99":2326000},"failedTrials":0,"httpAckLatency":{"count":250,"max":4054999,"mean":848063,"min":273000,"p50":793000,"p95":1369000,"p99":1609000},"noOpTrials":0,"orders":12,"queueEventEmissionAndDeliveryLatencyResidual":{"count":250,"max":1904000,"mean":234059,"min":-5000,"p50":157000,"p95":626000,"p99":1251000},"rawTrialsFile":"benchmarks/results/closure-e2e-latency-20260729T061157Z.json","seeds":[1000,1001,1002,1003,1004,1005,1006,1007,1008,1009],"sequenceProtocolErrors":0,"successfulTrials":250,"totalTrials":250,"trialsPerSeed":25,"verificationFailures":0,"warmupTrials":20,"wsTimeouts":0}
+```
 
