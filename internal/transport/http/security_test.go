@@ -144,7 +144,7 @@ func TestPublicRoutesNeedNoSession(t *testing.T) {
 	}
 }
 
-// the central rule of the phase: one visitor cannot touch another's run.
+// the central access rule: one visitor cannot touch another's run.
 func TestOneSessionCannotReachAnothersSimulation(t *testing.T) {
 	server, _ := newSecureServer(t, ServerConfig{})
 	h := server.Routes()

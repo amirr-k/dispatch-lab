@@ -21,7 +21,7 @@ type Assignment struct {
 // CostWeights configures how pickup distance, order wait time, and driver
 // idle time combine into a single cost per candidate pair. Visible and
 // tunable so comparison mode can show exactly how the optimized assignment
-// trades these off against each other, per the spec's requirement.
+// trades these off against each other.
 type CostWeights struct {
 	// PickupDistance weights routed distance from driver to pickup.
 	PickupDistance float64 `json:"pickupDistance"`

@@ -281,7 +281,7 @@ func TestReopenDoesNotDisturbAnActiveRoute(t *testing.T) {
 
 // TestCloseEdgeMakesRouteUnreachable uses a minimal 3-node line (a-b-c) with
 // no alternate path, so closing the only edge to pickup leaves genuinely no
-// route — the explicit unreachable result the exit gate calls for.
+// route.
 func TestCloseEdgeMakesRouteUnreachable(t *testing.T) {
 	city := lineCityForClosureTest()
 	drivers := map[domain.DriverID]*domain.Driver{

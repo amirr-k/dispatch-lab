@@ -84,8 +84,8 @@ func sortedNodeIDs(c *domain.City) []domain.NodeID {
 	return ids
 }
 
-// TestAStarMatchesDijkstra is the property test the spec calls for: across
-// many randomized small graphs (with random closures) A* must agree with
+// TestAStarMatchesDijkstra is a randomized property test: across many
+// randomized small graphs (with random closures) A* must agree with
 // Dijkstra on reachability and optimal distance, and its path must be valid.
 func TestAStarMatchesDijkstra(t *testing.T) {
 	for seed := 0; seed < 25; seed++ {

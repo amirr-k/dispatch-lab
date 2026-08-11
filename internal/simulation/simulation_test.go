@@ -27,7 +27,7 @@ func runScenario(seed int64) []domain.Event {
 	return evs
 }
 
-// TestDeterministicReplay is the Phase 1 exit gate: the same seed and the same
+// TestDeterministicReplay verifies determinism: the same seed and the same
 // commands must produce the same event sequence.
 func TestDeterministicReplay(t *testing.T) {
 	a := runScenario(scenarioSeed)

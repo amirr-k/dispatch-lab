@@ -54,10 +54,10 @@ test("landing, place an order, observe assignment, close a road, observe reroute
   const targetEdgeId = await test.step("find the edge the assigned driver is about to cross", async () => {
     // rather than guess which edge is under the driver from timing alone,
     // ask the same endpoint the app itself polls: the snapshot's driver
-    // payload carries the live route and routeIndex (added in Phase 5 so a
-    // snapshot alone can resume a replay). Reading the *next* hop straight
-    // from there is what makes the closure below hit unconditionally,
-    // whatever tick the driver happens to be on by now.
+    // payload carries the live route and routeIndex, so a snapshot alone
+    // can resume a replay. Reading the *next* hop straight from there is
+    // what makes the closure below hit unconditionally, whatever tick the
+    // driver happens to be on by now.
     const request = await orderRequest;
     const simulationId = request.url().match(/\/simulations\/([^/]+)\/orders$/)?.[1];
     const token = (await request.headerValue("authorization"))?.replace(/^Bearer /, "");

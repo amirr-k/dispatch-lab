@@ -479,8 +479,8 @@ func (s *Simulation) handle(cmd Command) {
 
 // handleCloseRoad closes a road segment (both directions) and reroutes any
 // driver whose current path crosses it. A driver that can no longer reach
-// its target becomes idle again and its order is marked unassignable — the
-// explicit unreachable result the phase 3 exit gate calls for.
+// its target becomes idle again and its order is marked unassignable, rather
+// than left silently stuck.
 func (s *Simulation) handleCloseRoad(c CloseRoad) {
 	edge, ok := s.City.EdgeByID(c.EdgeID)
 	if !ok || edge.Closed {

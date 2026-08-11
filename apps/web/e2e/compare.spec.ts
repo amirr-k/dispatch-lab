@@ -17,8 +17,8 @@ test("runs an algorithm comparison and reports both strategies' measured metrics
   await expect(page.getByTestId("dispatch-mix")).toContainText(/Optimized dispatch mix/);
 
   // the same seed, driver count and demand level are required to reproduce
-  // byte-identical metrics (Phase 4's exit gate) - the scenario summary line
-  // is the on-page proof of exactly which inputs produced this table.
+  // byte-identical metrics - the scenario summary line is the on-page proof
+  // of exactly which inputs produced this table.
   await expect(page.getByText(/Scenario: seed 42, 12 drivers, rush demand \(24 orders\)/)).toBeVisible();
 
   await expect(page.getByRole("button", { name: "Download JSON" })).toBeVisible();

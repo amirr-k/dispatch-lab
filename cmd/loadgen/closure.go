@@ -144,7 +144,7 @@ type closureLatencyReport struct {
 	SequenceProtocolErrors int     `json:"sequenceProtocolErrors"`
 
 	// EndToEnd covers only successful, non-no-op, non-timeout trials - the
-	// headline number the resume bullet is allowed to cite.
+	// number that actually represents rerouting latency.
 	EndToEnd summary `json:"endToEndLatency"`
 	HTTPAck  summary `json:"httpAckLatency"`
 	Recalc   summary `json:"affectedRouteDetectionAndRoutingLatency"`

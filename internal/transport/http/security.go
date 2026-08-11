@@ -97,8 +97,8 @@ func (s *Server) rateLimit(next http.Handler) http.Handler {
 }
 
 func clientIP(r *http.Request) string {
-	// X-Forwarded-For is only meaningful behind a proxy that sets it; the
-	// deployment in phase 9 terminates TLS at one, so take the first hop.
+	// X-Forwarded-For is only meaningful behind a proxy that sets it; Render
+	// terminates TLS at one, so take the first hop.
 	if forwarded := r.Header.Get("X-Forwarded-For"); forwarded != "" {
 		if first, _, found := strings.Cut(forwarded, ","); found {
 			return strings.TrimSpace(first)

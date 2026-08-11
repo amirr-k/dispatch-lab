@@ -57,10 +57,10 @@ func TestShowcaseRunsAreProvisioned(t *testing.T) {
 }
 
 // withoutMeasuredLatency drops recalculationMs, the one wall-clock value the
-// event stream still carries. It stays in the payload because the product
-// spec requires the visitor to see "Routes recalculated in [measured
-// duration]" — it is a real measurement of a real recomputation, so it varies
-// by microseconds between runs while nothing the visitor sees does.
+// event stream still carries. The frontend shows it as "Routes recalculated
+// in [measured duration]" — it is a real measurement of a real
+// recomputation, so it varies by microseconds between runs while nothing
+// else the visitor sees does.
 func withoutMeasuredLatency(payload []byte) string {
 	var decoded map[string]any
 	if err := json.Unmarshal(payload, &decoded); err != nil {

@@ -28,8 +28,8 @@ type Arrival struct {
 
 // Scenario is a fully deterministic workload: the same scenario replayed
 // against a matching strategy always produces the same outcome, which is
-// what makes comparison results reproducible from a checked-in scenario and
-// command, per the phase 4 exit gate.
+// what makes comparison results reproducible from a checked-in scenario
+// alone.
 type Scenario struct {
 	Seed        int64       `json:"seed"`
 	Drivers     int         `json:"drivers"`
@@ -47,9 +47,8 @@ type Scenario struct {
 	MaxVirtualTime float64 `json:"maxVirtualTime"`
 }
 
-// Metrics summarizes one matching strategy's run over a scenario. Field
-// names and set match the "Report actual results" list in the product
-// spec's algorithm comparison demo.
+// Metrics summarizes one matching strategy's run over a scenario: the same
+// fields the compare page renders side by side for baseline and optimized.
 type Metrics struct {
 	Algorithm           string  `json:"algorithm"`
 	CompletedDeliveries int     `json:"completedDeliveries"`

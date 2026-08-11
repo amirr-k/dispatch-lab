@@ -1,9 +1,9 @@
 import { COLORS } from "./colors";
 import { ICONS, type MapIcon } from "./iconSet";
 
-// every entry pairs a symbol with a written label: the spec requires the map
-// be readable without relying on color alone. The glyphs come from the same
-// module the map draws from, so the two cannot disagree.
+// every entry pairs a symbol with a written label so the map stays readable
+// without relying on color alone. The glyphs come from the same module the
+// map draws from, so the two cannot disagree.
 const ENTRIES: { label: string; icon: MapIcon; color: string; muted?: boolean }[] = [
   { label: "Idle driver", icon: ICONS.driver, color: COLORS.idle, muted: true },
   { label: "Driver heading to a pickup", icon: ICONS.driver, color: COLORS.toPickup },

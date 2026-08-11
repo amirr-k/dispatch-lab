@@ -1,7 +1,7 @@
 package domain
 
-// EventType names the kind of a simulation event (wire names in the
-// planning-dir OpenAPI schema / architecture notes).
+// EventType names the kind of a simulation event, matching the wire names
+// clients receive over the WebSocket stream.
 type EventType string
 
 const (
@@ -21,7 +21,7 @@ const (
 )
 
 // Event is an immutable fact emitted by a simulation, ordered by Sequence.
-// JSON tags match the wire envelope in the planning-dir api-schema.yaml.
+// JSON tags match the wire envelope documented in docs/architecture.md.
 type Event struct {
 	SchemaVersion int       `json:"schemaVersion"`
 	SimulationID  string    `json:"simulationId"`

@@ -1,9 +1,9 @@
 import { withBase } from "./basePath";
 
-// the spec is explicit that the landing page must not lead with Go,
-// WebSockets, A*, or matching terminology - all of that lives here, behind a
-// deliberate click, so the first screen stays readable to someone who does
-// not know what any of those words mean.
+// the landing page deliberately doesn't lead with Go, WebSockets, A*, or
+// matching terminology - all of that lives here, behind a deliberate click,
+// so the first screen stays readable to someone who does not know what any
+// of those words mean.
 
 interface HowItWorksProps {
   open: boolean;

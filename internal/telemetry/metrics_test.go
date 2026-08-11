@@ -86,7 +86,7 @@ func TestExpositionCoversEveryRequiredMetric(t *testing.T) {
 	}
 	text := out.String()
 
-	// the metrics the phase 5 spec requires by name.
+	// every metric the /metrics endpoint promises to expose, by name.
 	for _, name := range []string{
 		"dispatchlab_active_simulations",
 		"dispatchlab_route_compute_duration_ms",

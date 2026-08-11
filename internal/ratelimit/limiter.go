@@ -1,8 +1,8 @@
 // Package ratelimit implements a per-key token bucket. It is deliberately
-// in-process: a shared limiter would mean Redis, and the spec bans
-// distributed infrastructure introduced without a measured requirement. One
-// instance's limits being independent is the right trade for a demo, and the
-// global simulation cap bounds the damage either way.
+// in-process rather than backed by something like Redis, since this runs as
+// a single instance and a shared limiter would be infrastructure with no
+// measured need. One instance's limits being independent is the right trade
+// for a demo, and the global simulation cap bounds the damage either way.
 package ratelimit
 
 import (

@@ -167,8 +167,8 @@ func TestReplayWithoutPersistenceIsUnavailable(t *testing.T) {
 	}
 }
 
-// the phase 5 exit gate: a finished run gets a stable replay url that keeps
-// serving after the live simulation is gone.
+// a finished run gets a stable replay url that keeps serving after the live
+// simulation is gone.
 func TestShowcaseGivesAStableReplayURL(t *testing.T) {
 	server, s, _ := newPersistedServer(t)
 	id := createSimulationFor(t, server, s)

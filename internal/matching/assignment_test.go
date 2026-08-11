@@ -139,9 +139,9 @@ func TestMinCostAssignmentEmptyMatrix(t *testing.T) {
 	}
 }
 
-// TestMinCostAssignmentMatchesBruteForceRandomized is the randomized
-// property test the spec calls for: across many small random matrices,
-// MinCostAssignment's total cost must equal the brute-force optimum.
+// TestMinCostAssignmentMatchesBruteForceRandomized is a randomized property
+// test: across many small random matrices, MinCostAssignment's total cost
+// must equal the brute-force optimum.
 func TestMinCostAssignmentMatchesBruteForceRandomized(t *testing.T) {
 	rng := rand.New(rand.NewSource(1))
 	for trial := 0; trial < 60; trial++ {
