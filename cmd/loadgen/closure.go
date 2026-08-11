@@ -559,7 +559,7 @@ func printClosureLatencyReport(r closureLatencyReport) {
 	fmt.Println("end-to-end (POST send -> causationId-matched road.closed received over WS):")
 	fmt.Printf("  p50=%s p95=%s p99=%s mean=%s max=%s min=%s (n=%d)\n",
 		r.EndToEnd.P50, r.EndToEnd.P95, r.EndToEnd.P99, r.EndToEnd.Mean, r.EndToEnd.Max, r.EndToEnd.Min, r.EndToEnd.Count)
-	fmt.Println("diagnostic breakdown (best-effort, not perfectly isolated - see docs/evidence.md):")
+	fmt.Println("diagnostic breakdown (best-effort, not perfectly isolated - see closureLatencyReport doc comment):")
 	fmt.Printf("  http ack:            p50=%s p95=%s (n=%d)\n", r.HTTPAck.P50, r.HTTPAck.P95, r.HTTPAck.Count)
 	fmt.Printf("  affected-route detect + A*: p50=%s p95=%s (n=%d)\n", r.Recalc.P50, r.Recalc.P95, r.Recalc.Count)
 	fmt.Printf("  residual (queue+emit+ws):   p50=%s p95=%s (n=%d)\n", r.Residual.P50, r.Residual.P95, r.Residual.Count)
